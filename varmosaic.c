@@ -56,7 +56,7 @@ int varmosaic(void){
   int exist;  /*output file alreayd exists or not*/
   int pixdivide; /* input image pixel is divided into pixdivide**2 subpixels */
 
-  long inimsize; /* Input imagesize. Readfrom NAXIS1 */
+  long inimsize,inimsize1,inimsize2; /* Input imagesize. Readfrom NAXIS1 */
 
   double dist=0.0, maxdist=-999.0,imagesize=0;
 
@@ -325,9 +325,9 @@ int varmosaic(void){
     int intXpixOut,intYpixOut;
 
     for(ienergy=0;ienergy<num_E_range;ienergy++){
-      in_flx_image[ienergy]=malloc(inimsize*inimsize*sizeof(float));
+      /*in_flx_image[ienergy]=malloc(inimsize*inimsize*sizeof(float));
       in_var_image[ienergy]=malloc(inimsize*inimsize*sizeof(float));    
-      in_expo_image[ienergy]=malloc(inimsize*inimsize*sizeof(float));    
+      in_expo_image[ienergy]=malloc(inimsize*inimsize*sizeof(float));    */
       flx_image[ienergy]=malloc(imagebin*imagebin*sizeof(float));
       sig_image[ienergy]=malloc(imagebin*imagebin*sizeof(float));
       var_image[ienergy]=malloc(imagebin*imagebin*sizeof(float));
@@ -356,8 +356,21 @@ int varmosaic(void){
     total_exposure=0;
     for(i=0;i<nfile;i++){/* start loop AA for each input file*/
       fits_open_image(&infptr, inimages[i], 0, &status);
+
+
       for(ienergy=1;ienergy<=num_E_range;ienergy++){/* Read all the flux and variance maps in the input file */
-	fits_movabs_hdu(infptr,ScW[ienergy-1].intHDU, &hdutype, &status); /* flux HDU */
+      
+	      fits_movabs_hdu(infptr,ScW[ienergy-1].intHDU, &hdutype, &status); /* flux HDU */
+          // allocate for each
+          fits_read_key_lng(infptr, "NAXIS1",   &inimsize1, comment, &status);
+          fits_read_key_lng(infptr, "NAXIS2",   &inimsize2, comment, &status);
+          printf("image %i energy band %i size %li x %li, allocating\n",i,ienergy,inimsize1,inimsize2);
+
+          in_flx_image[ienergy-1]=malloc(inimsize1*inimsize2*sizeof(float));
+          in_var_image[ienergy-1]=malloc(inimsize1*inimsize2*sizeof(float));    
+          in_expo_image[ienergy-1]=malloc(inimsize1*inimsize2*sizeof(float));    
+
+
 	fits_read_img_coord(infptr, &ScWxrefval, &ScWyrefval, &ScWxrefpix, &ScWyrefpix,&xinc,&yinc,
 			    &ScWrot, coordtype, &status);
 
@@ -371,16 +384,16 @@ int varmosaic(void){
 
     printf("Exposure: %.5lg; status %i\n",exposure_flat,status);
 
-	fits_read_2d_flt(infptr, 0L, 0, inimsize, inimsize, inimsize, in_flx_image[ienergy-1], &anynul, &status);
+	fits_read_2d_flt(infptr, 0L, 0, inimsize1, inimsize1, inimsize2, in_flx_image[ienergy-1], &anynul, &status);
 	fits_movabs_hdu(infptr,ScW[ienergy-1].varHDU, &hdutype, &status); /* variance HDU */
-	fits_read_2d_flt(infptr, 0L, 0, inimsize, inimsize, inimsize, in_var_image[ienergy-1], &anynul, &status);
+	fits_read_2d_flt(infptr, 0L, 0, inimsize1, inimsize1, inimsize2, in_var_image[ienergy-1], &anynul, &status);
 	fits_movabs_hdu(infptr,ScW[ienergy-1].expoHDU, &hdutype, &status); /* variance HDU */
-	fits_read_2d_flt(infptr, 0L, 0, inimsize, inimsize, inimsize, in_expo_image[ienergy-1], &anynul, &status);
+	fits_read_2d_flt(infptr, 0L, 0, inimsize1, inimsize1, inimsize2, in_expo_image[ienergy-1], &anynul, &status);
       }
       fits_close_file(infptr, &status);
       sprintf(text,"Reading image:%5d %s, status %i\n", i+1, inimages[i],status);
       HD_printf(text);
-      for(ii=1;ii<=inimsize;ii++){for(jj=1;jj<=inimsize;jj++){/*start loop YYY for input image pixels */
+      for(ii=1;ii<=inimsize1;ii++){for(jj=1;jj<=inimsize2;jj++){/*start loop YYY for input image pixels */
 	  /* Now we are dividing this input image pixel into sub-pixels.*/
 	for(l=1; l<=pixdivide; l++){for(m=1; m<=pixdivide; m++){ /* Start loop CCC repeat for sub-pixels */
 	  for(ienergy=1;ienergy<=num_E_range;ienergy++){/*start loop XXX for energy bands */
@@ -388,9 +401,9 @@ int varmosaic(void){
 	       Here, ii and jj are the X and Y pixel number of the input images,
 	       starting from 1, not zero.
 	    */
-	    flux     = in_flx_image[ienergy-1][(ii-1)+(jj-1)*inimsize];
-	    variance = in_var_image[ienergy-1][(ii-1)+(jj-1)*inimsize];
-	    exposure = in_expo_image[ienergy-1][(ii-1)+(jj-1)*inimsize];
+	    flux     = in_flx_image[ienergy-1][(ii-1)+(jj-1)*inimsize1]; // guess
+	    variance = in_var_image[ienergy-1][(ii-1)+(jj-1)*inimsize1];
+	    exposure = in_expo_image[ienergy-1][(ii-1)+(jj-1)*inimsize1];
 	    if(flux==flux&&variance==variance&&variance>0.0){ /* not NULL */
 	      {
 		double subpixelX, subpixelY, subpixelsize;
