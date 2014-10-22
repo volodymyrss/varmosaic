@@ -10,11 +10,14 @@ int printsub(const char *);
 /* headas_main() requires that TOOLSUB be defined first */
 #include "headas_main.c"
 
-#define VARMOSAIC_VERSION "varmosaic  ver 2.0 (2005-03-07)"
+#define VARMOSAIC_VERSION "varmosaic  ver 3.0 (2005-03-07)"
 #define  MAXFILE 10000      /* Maximum number of input files */
 #define  MAXNAMELENGTH 256  /* Maximum character length of file names */
 #define  BufLen_2      MAXNAMELENGTH /* Required for pfile.h */
 #define  MAX_E_RANGES 20    /* Maximum number of energy ranges for the input images */
+    
+#define offset_first_output_image 2
+#define output_images_per_band 4
 
 /* Carry out quick mosaic of integral images taking account of variance 
    2004-11-10 version 1.0 Ken Ebisawa 
@@ -35,6 +38,7 @@ int varmosaic(void){
   int status = 0, i, j, nfile, hdutype,jj, l, m;
   fitsfile *infptr,*outfptr;
   FILE *fp;
+  float total_exposure;
   char filelist[MAXNAMELENGTH];
   char inimages[MAXFILE][MAXNAMELENGTH], tmp[MAXNAMELENGTH], coordtype[10];
   double xrefval[MAXFILE], yrefval[MAXFILE], xrefpix, yrefpix, xinc, yinc, rot;
@@ -59,12 +63,13 @@ int varmosaic(void){
   struct ScWimage{ /* Defined for each energy range               */
     int    intHDU; /* HDU of the intensity map                    */
     int    varHDU; /* HDU of the variance map                     */
+    int    expoHDU; /* HDU of the variance map                     */
     double E_min;  /* E_min of the energy range                   */
     double E_max;  /* E_max of the energy range                   */
   } ScW[MAX_E_RANGES];
 
   static char taskname[80] = "varmosaic";
-  static char version[8] = "2.0";
+  static char version[8] = "3.0";
   /* Register taskname and version. */
   set_toolname(taskname);
   set_toolversion(version);
@@ -184,6 +189,9 @@ int varmosaic(void){
 	  ScW[ii].E_max = E_max;
 	}else if(strstr(imatype,"VARIANCE") != NULL) {
 	  ScW[ii].varHDU = j;
+	  //ii++;
+	}else if(strstr(imatype,"EXPOSURE") != NULL && strstr(imatype,"EXPOSUREFLAT") == NULL) {
+	  ScW[ii].expoHDU = j;
 	  ii++;
 	}
 	if(status !=0){
@@ -197,7 +205,7 @@ int varmosaic(void){
       sprintf(text,"Number of energy ranges = %d\n", num_E_range);
       HD_printf(text);
       for(ii=0;ii<num_E_range;ii++){
-	sprintf(text,"Energy range:%d Intensity HDU:%d Variance HDU:%d E_min %4.2f keV E_max %4.2f keV\n", ii+1, ScW[ii].intHDU,ScW[ii].varHDU,ScW[ii].E_min,ScW[ii].E_max);
+	sprintf(text,"Energy range:%d Intensity HDU:%d Variance HDU:%d Exposure HDU:%d E_min %4.2f keV E_max %4.2f keV\n", ii+1, ScW[ii].intHDU,ScW[ii].varHDU,ScW[ii].expoHDU,ScW[ii].E_min,ScW[ii].E_max);
 	HD_printf(text);
       }
       HD_printf("");
@@ -254,36 +262,40 @@ int varmosaic(void){
     naxes[0] = imagebin;naxes[1]=imagebin;
     xrefpixout = (1.0+ imagebin)/2.0;
     yrefpixout = (1.0+ imagebin)/2.0;
-    for(jj=1;jj<=num_E_range*3+1;jj++){ /* start loop EEE for each output HDU*/
+    fits_create_img(outfptr, FLOAT_IMG, 2, naxes, &status);
+    fits_create_img(outfptr, FLOAT_IMG, 2, naxes, &status); // offset here
+    for(jj=1;jj<=num_E_range*4+1;jj++){ /* start loop EEE for each output HDU*/
       fits_create_img(outfptr, FLOAT_IMG, 2, naxes, &status);
       fits_write_key_str(outfptr, "INSTRUME", instrume, "Instrument name", &status);
       fits_write_key_str(outfptr, "CREATOR", VARMOSAIC_VERSION, "Program to create this file", &status);
-      if(jj==num_E_range*3+1){
-	fits_write_key_str(outfptr, "IMATYPE", "EXPOSURE", "Type of image", &status);
-	fits_write_key_str(outfptr, "EXTNAME", "EXPOSURE", "Extension name", &status);
+      if(jj==num_E_range*4+1){
+	fits_write_key_str(outfptr, "IMATYPE", "EXPOSUREFLAT", "Type of image", &status);
+	fits_write_key_str(outfptr, "EXTNAME", "EXPOSUREFLAT", "Extension name", &status);
 	fits_write_key_str(outfptr, "BUNIT", "sec", "Unit for pixel values", &status);
       }else{
-	fits_write_key_dbl(outfptr,"E_MIN",ScW[(jj-1)/3].E_min,-4,"Lower energy boundary [keV]",&status);
-	fits_write_key_dbl(outfptr,"E_MAX",ScW[(jj-1)/3].E_max,-4,"Upper energy boundary [keV]",&status);
-	if(jj%3==1){
-	  fits_write_key_str(outfptr, "IMATYPE", "SIGNIFICANCE", "Type of image", &status);
-	  sprintf(extname,"SIGNIFICANCE%-d",(jj-1)/3+1);
-	  if(jj==1){
-	    fits_write_key_str(outfptr, "HDUNAME", extname, "Extension name", &status);
-	  }else{
-	    fits_write_key_str(outfptr, "EXTNAME", extname, "Extension name", &status);
-	  }
-	  fits_write_key_str(outfptr, "BUNIT", "no unit", "Unit for pixel values", &status);
-	}else if(jj%3==2){
+	fits_write_key_dbl(outfptr,"E_MIN",ScW[(jj-1)/4].E_min,-4,"Lower energy boundary [keV]",&status);
+	fits_write_key_dbl(outfptr,"E_MAX",ScW[(jj-1)/4].E_max,-4,"Upper energy boundary [keV]",&status);
+	if(jj%4==1){
 	  fits_write_key_str(outfptr, "IMATYPE", "INTENSITY", "Type of image", &status);
-	  sprintf(extname,"INTENSITY%-d",(jj-1)/3+1);
+	  sprintf(extname,"INTENSITY");
+	  //sprintf(extname,"INTENSITY%-d",(jj-1)/4+1);
 	  fits_write_key_str(outfptr, "EXTNAME", extname, "Extension name", &status);
 	  fits_write_key_str(outfptr, "BUNIT", "count/s", "Unit for pixel values", &status);
-	}else if(jj%3==0){
+	}else if(jj%4==2){
 	  fits_write_key_str(outfptr, "IMATYPE", "VARIANCE", "Type of image", &status);
-	  sprintf(extname,"VARIANCE%-d",(jj-1)/3+1);
+	  sprintf(extname,"VARIANCE");
 	  fits_write_key_str(outfptr, "EXTNAME", extname, "Extension name", &status);
 	  fits_write_key_str(outfptr, "BUNIT", "(count/s)**2", "Unit for pixel values", &status);
+	}else if(jj%4==3){
+	  fits_write_key_str(outfptr, "IMATYPE", "SIGNIFICANCE", "Type of image", &status);
+	  sprintf(extname,"SIGNIFICANCE");
+      fits_write_key_str(outfptr, "EXTNAME", extname, "Extension name", &status);
+	  fits_write_key_str(outfptr, "BUNIT", "no unit", "Unit for pixel values", &status);
+	}else if(jj%4==0){
+	  fits_write_key_str(outfptr, "IMATYPE", "EXPOSURE", "Type of image", &status);
+	  sprintf(extname,"EXPOSURE");
+	  fits_write_key_str(outfptr, "EXTNAME", extname, "Extension name", &status);
+	  fits_write_key_str(outfptr, "BUNIT", "seconds", "effective seconds", &status);
 	}
       }
       write_wcs(outfptr,aveRA,aveDEC,xrefpixout,yrefpixout,xinc,yinc,0.0E0,&status);
@@ -304,20 +316,22 @@ int varmosaic(void){
      3 times (flux, variance, significance) the number of energy ranges plus 1 (exposure) */
   {/* start block ZZZ*/
     int anynul,ii,kk,ienergy;
-    float *in_flx_image[MAX_E_RANGES], *in_var_image[MAX_E_RANGES];
-    float *flx_image[MAX_E_RANGES], *var_image[MAX_E_RANGES], *sig_image[MAX_E_RANGES], *exp_image;
+    float *in_flx_image[MAX_E_RANGES], *in_var_image[MAX_E_RANGES], *in_expo_image[MAX_E_RANGES];
+    float *flx_image[MAX_E_RANGES], *var_image[MAX_E_RANGES], *sig_image[MAX_E_RANGES], *expo_image[MAX_E_RANGES], *exp_image;
     double ScWxrefval,ScWyrefval,ScWxrefpix,ScWyrefpix,ScWrot,xpos,ypos;
     double XpixOut,YpixOut;
-    float flux, variance, exposure;
-    float sub_exposure, sub_variance;    
+    float flux, variance, exposure, exposure_flat;
+    float sub_exposure, sub_variance, sub_exposure_flat;    
     int intXpixOut,intYpixOut;
 
     for(ienergy=0;ienergy<num_E_range;ienergy++){
       in_flx_image[ienergy]=malloc(inimsize*inimsize*sizeof(float));
       in_var_image[ienergy]=malloc(inimsize*inimsize*sizeof(float));    
+      in_expo_image[ienergy]=malloc(inimsize*inimsize*sizeof(float));    
       flx_image[ienergy]=malloc(imagebin*imagebin*sizeof(float));
       sig_image[ienergy]=malloc(imagebin*imagebin*sizeof(float));
       var_image[ienergy]=malloc(imagebin*imagebin*sizeof(float));
+      expo_image[ienergy]=malloc(imagebin*imagebin*sizeof(float));
     }
     exp_image=malloc(imagebin*imagebin*sizeof(float));
     
@@ -328,6 +342,7 @@ int varmosaic(void){
 	  flx_image[ienergy][i+imagebin*j]=0.0;
 	  sig_image[ienergy][i+imagebin*j]=0.0;
 	  var_image[ienergy][i+imagebin*j]=0.0;
+	  expo_image[ienergy][i+imagebin*j]=0.0;
 	} 
       }
     }
@@ -337,23 +352,33 @@ int varmosaic(void){
        and write into the output file.
        Note, we do not divide pixels to save time; this causes quantization error
        below pixel level.*/
+
+    total_exposure=0;
     for(i=0;i<nfile;i++){/* start loop AA for each input file*/
       fits_open_image(&infptr, inimages[i], 0, &status);
       for(ienergy=1;ienergy<=num_E_range;ienergy++){/* Read all the flux and variance maps in the input file */
 	fits_movabs_hdu(infptr,ScW[ienergy-1].intHDU, &hdutype, &status); /* flux HDU */
 	fits_read_img_coord(infptr, &ScWxrefval, &ScWyrefval, &ScWxrefpix, &ScWyrefpix,&xinc,&yinc,
 			    &ScWrot, coordtype, &status);
-	fits_read_key_flt(infptr, "EXPOSURE",   &exposure, comment, &status);
-	if(strchr(instrume,'I')&&exposure<=0.0){
-	  /* Occationally, ISGRI has a bug that EXPOSURE = 0.0 */
-	  fits_read_key_flt(infptr, "TELAPSE",   &exposure, comment, &status);
-	}
+
+    fits_read_key_flt(infptr, "EXPOSURE",   &exposure_flat, comment, &status);
+    if(strchr(instrume,'I')&&exposure_flat<=0.0){
+      /* Occationally, ISGRI has a bug that EXPOSURE = 0.0 */
+
+      fits_read_key_flt(infptr, "TELAPSE",   &exposure_flat, comment, &status);
+    };
+    total_exposure+=exposure_flat;
+
+    printf("Exposure: %.5lg; status %i\n",exposure_flat,status);
+
 	fits_read_2d_flt(infptr, 0L, 0, inimsize, inimsize, inimsize, in_flx_image[ienergy-1], &anynul, &status);
 	fits_movabs_hdu(infptr,ScW[ienergy-1].varHDU, &hdutype, &status); /* variance HDU */
 	fits_read_2d_flt(infptr, 0L, 0, inimsize, inimsize, inimsize, in_var_image[ienergy-1], &anynul, &status);
+	fits_movabs_hdu(infptr,ScW[ienergy-1].expoHDU, &hdutype, &status); /* variance HDU */
+	fits_read_2d_flt(infptr, 0L, 0, inimsize, inimsize, inimsize, in_expo_image[ienergy-1], &anynul, &status);
       }
       fits_close_file(infptr, &status);
-      sprintf(text,"Reading image:%5d %s\n", i+1, inimages[i]);
+      sprintf(text,"Reading image:%5d %s, status %i\n", i+1, inimages[i],status);
       HD_printf(text);
       for(ii=1;ii<=inimsize;ii++){for(jj=1;jj<=inimsize;jj++){/*start loop YYY for input image pixels */
 	  /* Now we are dividing this input image pixel into sub-pixels.*/
@@ -365,6 +390,7 @@ int varmosaic(void){
 	    */
 	    flux     = in_flx_image[ienergy-1][(ii-1)+(jj-1)*inimsize];
 	    variance = in_var_image[ienergy-1][(ii-1)+(jj-1)*inimsize];
+	    exposure = in_expo_image[ienergy-1][(ii-1)+(jj-1)*inimsize];
 	    if(flux==flux&&variance==variance&&variance>0.0){ /* not NULL */
 	      {
 		double subpixelX, subpixelY, subpixelsize;
@@ -384,8 +410,10 @@ int varmosaic(void){
 		/* Each sub-pixel carries the associated values,
 		   sub_exposure=exposure/sub_pixel_numbers, sub_pixel_flux=flux, and sub_variance=sub_pixel_numbers*variance.*/
 		sub_exposure = exposure/ (float)(pow(pixdivide,2));
+		sub_exposure_flat = exposure_flat/ (float)(pow(pixdivide,2));
 		sub_variance = variance*(float) pow(pixdivide,2);
-		if(ienergy==1){exp_image[kk]=exp_image[kk]+sub_exposure;}
+        if(ienergy==1){exp_image[kk]=exp_image[kk]+sub_exposure_flat;}
+        expo_image[ienergy-1][kk]=expo_image[ienergy-1][kk]+sub_exposure;
 		if(var_image[ienergy-1][kk]>0.0){
 		  flx_image[ienergy-1][kk]=flx_image[ienergy-1][kk]/var_image[ienergy-1][kk]+ flux/sub_variance;
 		  {float tmp;
@@ -404,18 +432,22 @@ int varmosaic(void){
 	}}/* end CCC repeating for the number of sub-pixels */
       }}  /* end YYY, loop for each pixel of an input image*/
     }     /* end AA, loop for input images */
+
     
     /* Now we are going to write the output image */
     fits_open_image(&outfptr, outfile, 1, &status);
     for(ienergy=1;ienergy<=num_E_range;ienergy++){ /* loop for enery ranges */
-      fits_movabs_hdu(outfptr,3*(ienergy-1)+1,&hdutype, &status); /*significane */
-      fits_write_2d_flt(outfptr, 0L, (long) imagebin, (long) imagebin,(long)imagebin,sig_image[ienergy-1],&status);
-      fits_movabs_hdu(outfptr,3*(ienergy-1)+2,&hdutype, &status); /*flux        */
+      fits_movabs_hdu(outfptr,4*(ienergy-1)+1+offset_first_output_image,&hdutype, &status); /*significane */
+      fits_write_key_dbl(outfptr, "EXPOSURE",  (double)total_exposure, -4, "exposure", &status);
       fits_write_2d_flt(outfptr, 0L, (long) imagebin, (long) imagebin,(long)imagebin,flx_image[ienergy-1],&status);
-      fits_movabs_hdu(outfptr,3*(ienergy-1)+3,&hdutype, &status); /*variance    */
+      fits_movabs_hdu(outfptr,4*(ienergy-1)+2+offset_first_output_image,&hdutype, &status); /*flux        */
       fits_write_2d_flt(outfptr, 0L, (long) imagebin, (long) imagebin,(long)imagebin,var_image[ienergy-1],&status);
+      fits_movabs_hdu(outfptr,4*(ienergy-1)+3+offset_first_output_image,&hdutype, &status); /*variance    */
+      fits_write_2d_flt(outfptr, 0L, (long) imagebin, (long) imagebin,(long)imagebin,sig_image[ienergy-1],&status);
+      fits_movabs_hdu(outfptr,4*(ienergy-1)+4+offset_first_output_image,&hdutype, &status); /*exposure    */
+      fits_write_2d_flt(outfptr, 0L, (long) imagebin, (long) imagebin,(long)imagebin,expo_image[ienergy-1],&status);
     }
-    fits_movabs_hdu(outfptr,3*num_E_range+1,&hdutype, &status); /*Exposure    */
+    fits_movabs_hdu(outfptr,4*num_E_range+1+offset_first_output_image,&hdutype, &status); /*Exposure    */
     fits_write_2d_flt(outfptr, 0L, (long) imagebin, (long) imagebin,(long)imagebin,exp_image,&status);
     fits_close_file(outfptr, &status);
     
@@ -423,9 +455,11 @@ int varmosaic(void){
     for(i=0;i<num_E_range;i++){
       free(in_flx_image[i]);
       free(in_var_image[i]);
+      free(in_expo_image[i]);
       free(flx_image[i]);
       free(sig_image[i]);
       free(var_image[i]);
+      free(expo_image[i]);
     }
     free(exp_image);
   }/*end of block ZZZ finish writing images*/
