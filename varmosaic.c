@@ -32,19 +32,19 @@ int printsub(const char *);
 
 /* Function prototypes */
 int varmosaic(void);
-int write_wcs(fitsfile *outfptr,double xrval,double yrval,double xrpix,double yrpix,double xinc,double yinc,double rot, int *status);
+int write_wcs(fitsfile *outfptr,double xrval,double yrval,double xrpix,double yrpix,double xinc,double yinc,double rot, char ctype[], char ctype2[], int *status);
 
 int varmosaic(void){
   int status = 0, i, j, nfile, hdutype,jj, l, m;
   fitsfile *infptr,*outfptr;
-  FILE *fp;
+  FILE *fp,*region_file;
   float total_exposure;
   char filelist[MAXNAMELENGTH];
   char inimages[MAXFILE][MAXNAMELENGTH], tmp[MAXNAMELENGTH], coordtype[10];
   double xrefval[MAXFILE], yrefval[MAXFILE], xrefpix, yrefpix, xinc, yinc, rot;
   double pointx[MAXFILE],pointy[MAXFILE],pointz[MAXFILE];
   double avex=0.0,avey=0.0,avez=0.0,deg2rad=1.745329252E-2;
-  char instrume[20], comment[MAXNAMELENGTH],outfile[MAXNAMELENGTH];
+  char instrume[20], comment[MAXNAMELENGTH],outfile[MAXNAMELENGTH], outregion[MAXNAMELENGTH], out_coordtype[10], ctype1[20],  ctype2[20]  ;
   char text[9999]; /* Output text messages */
   
   double aveRA, aveDEC, xrefpixout, yrefpixout;   /* WCS information of the output file. Note, xinc and yinc
@@ -96,7 +96,16 @@ int varmosaic(void){
   HD_printf(text);
 
   /* Read other parameters */
+  status=PILGetString("outregion", outregion);
   status=PILGetString("outimage", outfile);
+  
+  status=PILGetString("coordtype", out_coordtype);
+
+  sprintf(ctype1,"RA--%s",out_coordtype);
+  sprintf(ctype2,"DEC-%s",out_coordtype);
+
+  sprintf(text,"output mosaic in %s and region in %s\n", outfile, outregion);  
+  HD_printf(text);
   status=PILGetInt("pixdivide", &pixdivide);
   sprintf(text,"##### Input pixel is divided into %d x %d sub-pixels\n", pixdivide, pixdivide);  
   HD_printf(text);
@@ -144,6 +153,12 @@ int varmosaic(void){
      to determine the size of the mosaic image.  Note, we use the fixed  imagebin size, 
      same as the ScW level images. Fom the first input file, we get the number of energy bands. 
      Assumption is that all the input files have the same number of energy bands */
+
+  region_file=fopen(outregion,"w");
+  
+  fprintf(region_file,"# comments\n");
+  fprintf(region_file,"global color=green dashlist=8 3 width=1 font=\"helvetica 10 normal roman\" select=1 highlite=1 dash=0 fixed=0 edit=1 move=1 delete=1 include=1 source=1\n");
+  fprintf(region_file,"fk5\n");
   
   for(i=0;i<nfile;i++){ /* loop DDD for each input file*/
     /*workaround in Barn. Somehow fits_open_image detect the empty primary
@@ -160,7 +175,7 @@ int varmosaic(void){
 			&rot, coordtype, &status);
     sprintf(text,"Input File[%d]: %s\n", i+1,inimages[i]);
     HD_printf(text);
-    sprintf(text,"Pointing direction: (%7.3f,%7.3f)\n", xrefval[i], yrefval[i]);
+    sprintf(text,"Pointing direction: (%7.3f,%7.3f) rotation %.5lg\n", xrefval[i], yrefval[i],rot);
     HD_printf(text);
     pointx[i]=cos(xrefval[i]*deg2rad)*cos(yrefval[i]*deg2rad);
     pointy[i]=sin(xrefval[i]*deg2rad)*cos(yrefval[i]*deg2rad);
@@ -212,8 +227,11 @@ int varmosaic(void){
       }
     }/*End CCC for the first input file */
       fits_close_file(infptr, &status);
+
+     fprintf(region_file,"vector(%.5lg,%.5lg,0.5,%.5lg)\n",xrefval[i],yrefval[i],rot);
   } /* End DDD for each input file */
   
+  fclose(region_file);
 
   if(imagebin <=0){ /* block LLL when imagebin in the parameter file <=0,
 		       Determine the average poiting position and output image size from the input files*/
@@ -268,10 +286,12 @@ int varmosaic(void){
       fits_create_img(outfptr, FLOAT_IMG, 2, naxes, &status);
       fits_write_key_str(outfptr, "INSTRUME", instrume, "Instrument name", &status);
       fits_write_key_str(outfptr, "CREATOR", VARMOSAIC_VERSION, "Program to create this file", &status);
-      if(jj==num_E_range*4+1){
-	fits_write_key_str(outfptr, "IMATYPE", "EXPOSUREFLAT", "Type of image", &status);
-	fits_write_key_str(outfptr, "EXTNAME", "EXPOSUREFLAT", "Extension name", &status);
-	fits_write_key_str(outfptr, "BUNIT", "sec", "Unit for pixel values", &status);
+      if(jj>=num_E_range*4+1){
+        if(jj==num_E_range*4+1){
+            fits_write_key_str(outfptr, "IMATYPE", "EXPOSUREFLAT", "Type of image", &status);
+            fits_write_key_str(outfptr, "EXTNAME", "EXPOSUREFLAT", "Extension name", &status);
+            fits_write_key_str(outfptr, "BUNIT", "sec", "Unit for pixel values", &status);
+        };
       }else{
 	fits_write_key_dbl(outfptr,"E_MIN",ScW[(jj-1)/4].E_min,-4,"Lower energy boundary [keV]",&status);
 	fits_write_key_dbl(outfptr,"E_MAX",ScW[(jj-1)/4].E_max,-4,"Upper energy boundary [keV]",&status);
@@ -298,7 +318,7 @@ int varmosaic(void){
 	  fits_write_key_str(outfptr, "BUNIT", "seconds", "effective seconds", &status);
 	}
       }
-      write_wcs(outfptr,aveRA,aveDEC,xrefpixout,yrefpixout,xinc,yinc,0.0E0,&status);
+      write_wcs(outfptr,aveRA,aveDEC,xrefpixout,yrefpixout,xinc,yinc,0.0E0,ctype1,ctype2,&status);
       sprintf(comment, "Number of subpixel divisions: %2dx%2d",pixdivide,pixdivide);
       fits_write_comment(outfptr, comment, &status);
       sprintf(comment, "Total number of input files: %5d",nfile);
@@ -364,8 +384,8 @@ int varmosaic(void){
           // allocate for each
           fits_read_key_lng(infptr, "NAXIS1",   &inimsize1, comment, &status);
           fits_read_key_lng(infptr, "NAXIS2",   &inimsize2, comment, &status);
-          printf("image %i energy band %i size %li x %li, allocating\n",i,ienergy,inimsize1,inimsize2);
 
+          printf("image %i energy band %i size %li x %li, allocating\n",i,ienergy,inimsize1,inimsize2);
           in_flx_image[ienergy-1]=malloc(inimsize1*inimsize2*sizeof(float));
           in_var_image[ienergy-1]=malloc(inimsize1*inimsize2*sizeof(float));    
           in_expo_image[ienergy-1]=malloc(inimsize1*inimsize2*sizeof(float));    
@@ -382,7 +402,7 @@ int varmosaic(void){
     };
     total_exposure+=exposure_flat;
 
-    printf("Exposure: %.5lg; status %i\n",exposure_flat,status);
+    printf("Exposure: %.5lg coordtype %s; status %i\n",exposure_flat,coordtype,status);
 
 	fits_read_2d_flt(infptr, 0L, 0, inimsize1, inimsize1, inimsize2, in_flx_image[ienergy-1], &anynul, &status);
 	fits_movabs_hdu(infptr,ScW[ienergy-1].varHDU, &hdutype, &status); /* variance HDU */
@@ -410,11 +430,23 @@ int varmosaic(void){
 		subpixelsize = 1.0/ (double) pixdivide;
 		subpixelX = (double) ii - 0.5 + (l-0.5) * subpixelsize;
 		subpixelY = (double) jj - 0.5 + (m-0.5) * subpixelsize;
+        if (status!=0) {
+            printf("failed before fits_pix_to_world\n");
+            exit(1);
+        };
 		fits_pix_to_world(subpixelX,subpixelY,ScWxrefval,ScWyrefval,ScWxrefpix,ScWyrefpix,xinc,yinc,ScWrot,coordtype,&xpos,&ypos,
 				  &status);
+        if (status!=0) {
+            printf("failed to fits_pix_to_world status %i\n",status);
+            exit(1);
+        };
 	      }
 	      
-	      fits_world_to_pix(xpos,ypos,aveRA,aveDEC,xrefpixout,yrefpixout,xinc,yinc,0.0E0,coordtype,&XpixOut,&YpixOut,&status);
+	      fits_world_to_pix(xpos,ypos,aveRA,aveDEC,xrefpixout,yrefpixout,xinc,yinc,0.0E0,out_coordtype,&XpixOut,&YpixOut,&status);
+        if (status!=0) {
+            printf("failed to fits_world_to_pix status %i\n",status);
+            exit(1);
+        };
 	      if(XpixOut>=0.5&&XpixOut<=imagebin+0.5&&YpixOut>=0.5&&YpixOut<=imagebin+0.5){
 		intXpixOut=floor(XpixOut+0.5);
 		intYpixOut=floor(YpixOut+0.5);
@@ -489,10 +521,10 @@ int varmosaic(void){
   return status;
 }
 
-int write_wcs(fitsfile *outfptr,double xrval,double yrval,double xrpix,double yrpix,double xinc,double yinc,double rot, int *status){
+int write_wcs(fitsfile *outfptr,double xrval,double yrval,double xrpix,double yrpix,double xinc,double yinc,double rot, char ctype1[], char ctype2[], int *status){
   fits_write_key_str(outfptr,"RADECSYS","FK5","Reference frame",status);
-  fits_write_key_str(outfptr,"CTYPE1","RA---TAN","Projection method", status);
-  fits_write_key_str(outfptr,"CTYPE2","DEC--TAN","Projection method", status);
+  fits_write_key_str(outfptr,"CTYPE1",ctype1,"Projection method", status);
+  fits_write_key_str(outfptr,"CTYPE2",ctype2,"Projection method", status);
   fits_write_key_dbl(outfptr,"EQUINOX",2000.0E0,-15,"Coordinate system equinox",status);
   fits_write_key_dbl(outfptr,"CRVAL1",xrval,-15,"RA at reference point", status);
   fits_write_key_dbl(outfptr,"CRVAL2",yrval,-15,"DEC at reference point",status);  
