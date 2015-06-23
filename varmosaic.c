@@ -11,8 +11,9 @@ int printsub(const char *);
 #include "headas_main.c"
 
 #define VARMOSAIC_VERSION "varmosaic  ver 3.0 (2005-03-07)"
+
 #define  MAXFILE 10000      /* Maximum number of input files */
-#define  MAXNAMELENGTH 256  /* Maximum character length of file names */
+#define  MAXNAMELENGTH 1024  /* Maximum character length of file names */
 #define  BufLen_2      MAXNAMELENGTH /* Required for pfile.h */
 #define  MAX_E_RANGES 20    /* Maximum number of energy ranges for the input images */
     
@@ -41,22 +42,27 @@ int varmosaic(void){
   float total_exposure;
   char filelist[MAXNAMELENGTH];
   char inimages[MAXFILE][MAXNAMELENGTH], tmp[MAXNAMELENGTH], coordtype[10];
+  int inimages_mode[MAXFILE];
   double xrefval[MAXFILE], yrefval[MAXFILE], xrefpix, yrefpix, xinc, yinc, rot;
   double pointx[MAXFILE],pointy[MAXFILE],pointz[MAXFILE];
   double avex=0.0,avey=0.0,avez=0.0,deg2rad=1.745329252E-2;
   char instrume[20], comment[MAXNAMELENGTH],outfile[MAXNAMELENGTH], outregion[MAXNAMELENGTH], out_coordtype[10], ctype1[20],  ctype2[20]  ;
   char text[9999]; /* Output text messages */
   
+  double x_ref,y_ref,z_ref;
   double aveRA, aveDEC, xrefpixout, yrefpixout;   /* WCS information of the output file. Note, xinc and yinc
+
 						     are the same as those of input files  */
   int imagebin;    /* Output image bins (X and Y same)  */
-  int num_E_range=0; /* Number of energy ranges in the input images/output image */
+  int num_E_range=-1; /* Number of energy ranges in the input images/output image */
   
   int clobber; /* clobber the output image or not */
+  int use_ref=0; /* clobber the output image or not */
   int exist;  /*output file alreayd exists or not*/
   int pixdivide; /* input image pixel is divided into pixdivide**2 subpixels */
 
   long inimsize,inimsize1,inimsize2; /* Input imagesize. Readfrom NAXIS1 */
+    double offset;
 
   double dist=0.0, maxdist=-999.0,imagesize=0;
 
@@ -88,6 +94,7 @@ int varmosaic(void){
     i = 0;
     while(fgets(tmp, MAXNAMELENGTH,fp)!=NULL&&sscanf(tmp,"%s",inimages[i])>0){
       i++;
+      inimages_mode[i]=0;
     }
     fclose(fp);
   }
@@ -143,6 +150,10 @@ int varmosaic(void){
       status=PILGetReal("dec_ref",&aveDEC);
       sprintf(text,"##### Reference point RA, DEC = %10.3f %10.3f\n", aveRA, aveDEC);
       HD_printf(text);
+      x_ref=cos(aveRA*deg2rad)*cos(aveDEC*deg2rad);
+      y_ref=sin(aveRA*deg2rad)*cos(aveDEC*deg2rad);
+      z_ref=sin(aveDEC*deg2rad);
+      use_ref=1;
   }
 
   
@@ -167,24 +178,54 @@ int varmosaic(void){
       fits_get_hdu_num(infptr, &hdunum);
       }
     */
+    status=0;
+
     fits_open_data(&infptr, inimages[i], 0, &status);
+    sprintf(text,"Input File[%d]: %s\n", i+1,inimages[i]);
+    HD_printf(text);
+
+    if (status!=0) {
+        sprintf(text,"failed to open, skipping\n");
+        inimages_mode[i]=1;
+        HD_printf(text);
+        status=0;
+        continue;
+    };
+
+
     fits_movabs_hdu(infptr, 3, &hdutype, &status);
 
     fits_read_key_str(infptr, "INSTRUME", instrume,comment,&status);
     fits_read_img_coord(infptr, &xrefval[i], &yrefval[i], &xrefpix, &yrefpix, &xinc,  &yinc,
 			&rot, coordtype, &status);
-    sprintf(text,"Input File[%d]: %s\n", i+1,inimages[i]);
-    HD_printf(text);
-    sprintf(text,"Pointing direction: (%7.3f,%7.3f) rotation %.5lg\n", xrefval[i], yrefval[i],rot);
-    HD_printf(text);
     pointx[i]=cos(xrefval[i]*deg2rad)*cos(yrefval[i]*deg2rad);
     pointy[i]=sin(xrefval[i]*deg2rad)*cos(yrefval[i]*deg2rad);
     pointz[i]=sin(yrefval[i]*deg2rad);
+
+    if (use_ref) {
+        offset=acos((pointx[i]*x_ref+pointy[i]*y_ref+pointz[i]*z_ref))/deg2rad;
+    } else {
+        offset=acos((pointx[i]*avex+pointy[i]*avey+pointz[i]*avez)/pow(avex*avex+avey*avey+avez*avez,0.5))/deg2rad;
+    };
+    
+    sprintf(text,"Pointing direction: (%7.3f,%7.3f) rotation %.5g, offset from average %.5g\n", xrefval[i], yrefval[i],rot,offset);
+    HD_printf(text);
+
+    if (offset>60.) {
+        inimages_mode[i]=2;
+        sprintf(text,"offset too large, skipping\n");
+        HD_printf(text);
+        fits_close_file(infptr, &status);
+        continue;
+    };
+
     avex= avex + pointx[i];
     avey= avey + pointy[i];
     avez= avez + pointz[i];
+
     
-    if(i==0){/* block CCC */
+    
+    if(num_E_range<=0){/* block CCC */
       /* Look into the first image file structure to know the energy bands*/
       {int hdunum,ii=0;
       char imatype[20];
@@ -228,7 +269,7 @@ int varmosaic(void){
     }/*End CCC for the first input file */
       fits_close_file(infptr, &status);
 
-     fprintf(region_file,"vector(%.5lg,%.5lg,0.5,%.5lg)\n",xrefval[i],yrefval[i],rot);
+     fprintf(region_file,"vector(%.5g,%.5g,0.5,%.5g)\n",xrefval[i],yrefval[i],rot);
   } /* End DDD for each input file */
   
   fclose(region_file);
@@ -255,6 +296,9 @@ int varmosaic(void){
        input imagess,  write necessary keywords to the output file, in particular WCS keywords.*/
     
     for(i=0;i<nfile;i++){
+        if (inimages_mode[i]!=0) {
+            continue;
+        };
       dist = sqrt((avex-pointx[i])*(avex-pointx[i])+(avey-pointy[i])*(avey-pointy[i])+(avez-pointz[i])*(avez-pointz[i]));
       if(dist > maxdist){maxdist = dist;}
     }
@@ -375,15 +419,29 @@ int varmosaic(void){
 
     total_exposure=0;
     for(i=0;i<nfile;i++){/* start loop AA for each input file*/
+        sprintf(text,"Image %i bands %i\n", i, num_E_range);
+        HD_printf(text);
+        if (inimages_mode[i]!=0) {
+            sprintf(text,"image disabled, code %i\n", inimages_mode[0]);
+            HD_printf(text);
+            continue;
+        };
+
       fits_open_image(&infptr, inimages[i], 0, &status);
 
 
       for(ienergy=1;ienergy<=num_E_range;ienergy++){/* Read all the flux and variance maps in the input file */
-      
-	      fits_movabs_hdu(infptr,ScW[ienergy-1].intHDU, &hdutype, &status); /* flux HDU */
+
+          fits_movabs_hdu(infptr,ScW[ienergy-1].intHDU, &hdutype, &status); /* flux HDU */
           // allocate for each
           fits_read_key_lng(infptr, "NAXIS1",   &inimsize1, comment, &status);
           fits_read_key_lng(infptr, "NAXIS2",   &inimsize2, comment, &status);
+
+          if (status!=0) {
+              sprintf(text,"failed to read image dimentions!\n");
+              HD_printf(text);
+              break;
+          }; 
 
           printf("image %i energy band %i size %li x %li, allocating\n",i,ienergy,inimsize1,inimsize2);
           in_flx_image[ienergy-1]=malloc(inimsize1*inimsize2*sizeof(float));
@@ -391,28 +449,43 @@ int varmosaic(void){
           in_expo_image[ienergy-1]=malloc(inimsize1*inimsize2*sizeof(float));    
 
 
-	fits_read_img_coord(infptr, &ScWxrefval, &ScWyrefval, &ScWxrefpix, &ScWyrefpix,&xinc,&yinc,
-			    &ScWrot, coordtype, &status);
+          fits_read_img_coord(infptr, &ScWxrefval, &ScWyrefval, &ScWxrefpix, &ScWyrefpix,&xinc,&yinc,
+                  &ScWrot, coordtype, &status);
 
-    fits_read_key_flt(infptr, "EXPOSURE",   &exposure_flat, comment, &status);
-    if(strchr(instrume,'I')&&exposure_flat<=0.0){
-      /* Occationally, ISGRI has a bug that EXPOSURE = 0.0 */
+          fits_read_key_flt(infptr, "EXPOSURE",   &exposure_flat, comment, &status);
+          if(strchr(instrume,'I')&&exposure_flat<=0.0){
+              /* Occationally, ISGRI has a bug that EXPOSURE = 0.0 */
 
-      fits_read_key_flt(infptr, "TELAPSE",   &exposure_flat, comment, &status);
-    };
-    total_exposure+=exposure_flat;
+              fits_read_key_flt(infptr, "TELAPSE",   &exposure_flat, comment, &status);
+          };
 
-    printf("Exposure: %.5lg coordtype %s; status %i\n",exposure_flat,coordtype,status);
+          if (ienergy==1)
+            total_exposure+=exposure_flat;
 
-	fits_read_2d_flt(infptr, 0L, 0, inimsize1, inimsize1, inimsize2, in_flx_image[ienergy-1], &anynul, &status);
-	fits_movabs_hdu(infptr,ScW[ienergy-1].varHDU, &hdutype, &status); /* variance HDU */
-	fits_read_2d_flt(infptr, 0L, 0, inimsize1, inimsize1, inimsize2, in_var_image[ienergy-1], &anynul, &status);
-	fits_movabs_hdu(infptr,ScW[ienergy-1].expoHDU, &hdutype, &status); /* variance HDU */
-	fits_read_2d_flt(infptr, 0L, 0, inimsize1, inimsize1, inimsize2, in_expo_image[ienergy-1], &anynul, &status);
+          printf("Exposure: %.5g coordtype %s; status %i\n",exposure_flat,coordtype,status);
+
+          fits_read_2d_flt(infptr, 0L, 0, inimsize1, inimsize1, inimsize2, in_flx_image[ienergy-1], &anynul, &status);
+          fits_movabs_hdu(infptr,ScW[ienergy-1].varHDU, &hdutype, &status); /* variance HDU */
+          fits_read_2d_flt(infptr, 0L, 0, inimsize1, inimsize1, inimsize2, in_var_image[ienergy-1], &anynul, &status);
+          fits_movabs_hdu(infptr,ScW[ienergy-1].expoHDU, &hdutype, &status); /* variance HDU */
+          fits_read_2d_flt(infptr, 0L, 0, inimsize1, inimsize1, inimsize2, in_expo_image[ienergy-1], &anynul, &status);
       }
+      if (status!=0) {
+          sprintf(text,"failed to read image dimentions!\n");
+          HD_printf(text);
+          status=0;
+          break;
+      }; 
+
       fits_close_file(infptr, &status);
-      sprintf(text,"Reading image:%5d %s, status %i\n", i+1, inimages[i],status);
+      sprintf(text,"Reading image:%5d %s, total exposure %.5g ks, status %i\n", i, inimages[i],total_exposure/1e3,status);
       HD_printf(text);
+      if (status!=0) {
+          sprintf(text,"failed to open!\n");
+          HD_printf(text);
+          status=0;
+          continue;
+      }; 
       for(ii=1;ii<=inimsize1;ii++){for(jj=1;jj<=inimsize2;jj++){/*start loop YYY for input image pixels */
 	  /* Now we are dividing this input image pixel into sub-pixels.*/
 	for(l=1; l<=pixdivide; l++){for(m=1; m<=pixdivide; m++){ /* Start loop CCC repeat for sub-pixels */
