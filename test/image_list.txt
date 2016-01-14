@@ -1,0 +1,10 @@
+/Integral/data/reduced/ddcache/byscw/0665/066500200010.001/ii_skyimage.v2/eee099e3/isgri_sky_ima.fits.gz
+/Integral/data/reduced/ddcache/byscw/0665/066500210010.001/ii_skyimage.v2/eee099e3/isgri_sky_ima.fits.gz
+/Integral/data/reduced/ddcache/byscw/0665/066500220010.001/ii_skyimage.v2/eee099e3/isgri_sky_ima.fits.gz
+/Integral/data/reduced/ddcache/byscw/0665/066500230010.001/ii_skyimage.v2/eee099e3/isgri_sky_ima.fits.gz
+/Integral/data/reduced/ddcache/byscw/0665/066500240010.001/ii_skyimage.v2/eee099e3/isgri_sky_ima.fits.gz
+/Integral/data/reduced/ddcache/byscw/0665/066500250010.001/ii_skyimage.v2/eee099e3/isgri_sky_ima.fits.gz
+/Integral/data/reduced/ddcache/byscw/0665/066500260010.001/ii_skyimage.v2/eee099e3/isgri_sky_ima.fits.gz
+/Integral/data/reduced/ddcache/byscw/0665/066500270010.001/ii_skyimage.v2/eee099e3/isgri_sky_ima.fits.gz
+/Integral/data/reduced/ddcache/byscw/0665/066500280010.001/ii_skyimage.v2/eee099e3/isgri_sky_ima.fits.gz
+/Integral/data/reduced/ddcache/byscw/0665/066500290010.001/ii_skyimage.v2/eee099e3/isgri_sky_ima.fits.gz
