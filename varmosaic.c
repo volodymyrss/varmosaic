@@ -3,6 +3,8 @@
 #include <math.h>
 #include "pil.h"
 #include "headas.h"        
+#include "chealpix.h"
+
                                                                                 
 int printsub(const char *);
                                                                                 
@@ -44,9 +46,10 @@ int varmosaic(void){
   char inimages[MAXFILE][MAXNAMELENGTH], tmp[MAXNAMELENGTH], coordtype[10];
   int inimages_mode[MAXFILE];
   double xrefval[MAXFILE], yrefval[MAXFILE], xrefpix, yrefpix, xinc, yinc, rot;
-  double pointx[MAXFILE],pointy[MAXFILE],pointz[MAXFILE];
+  double pointx[MAXFILE],pointy[MAXFILE],pointz[MAXFILE],ptstart[MAXFILE];
   double avex=0.0,avey=0.0,avez=0.0,deg2rad=1.745329252E-2;
-  char instrume[20], comment[MAXNAMELENGTH],outfile[MAXNAMELENGTH], outregion[MAXNAMELENGTH], out_coordtype[10], ctype1[20],  ctype2[20]  ;
+  double tstart;
+  char instrume[20], comment[MAXNAMELENGTH],outfile[MAXNAMELENGTH], outregion[MAXNAMELENGTH], out_coordtype[10], ctype1[20],  ctype2[20];
   char text[9999]; /* Output text messages */
   
   double x_ref,y_ref,z_ref;
@@ -105,7 +108,6 @@ int varmosaic(void){
   /* Read other parameters */
   status=PILGetString("outregion", outregion);
   status=PILGetString("outimage", outfile);
-  
   status=PILGetString("coordtype", out_coordtype);
 
   sprintf(ctype1,"RA--%s",out_coordtype);
@@ -195,12 +197,14 @@ int varmosaic(void){
 
     fits_movabs_hdu(infptr, 3, &hdutype, &status);
 
+    fits_read_key_dbl(infptr, "TSTART", &tstart,comment,&status);
     fits_read_key_str(infptr, "INSTRUME", instrume,comment,&status);
     fits_read_img_coord(infptr, &xrefval[i], &yrefval[i], &xrefpix, &yrefpix, &xinc,  &yinc,
 			&rot, coordtype, &status);
     pointx[i]=cos(xrefval[i]*deg2rad)*cos(yrefval[i]*deg2rad);
     pointy[i]=sin(xrefval[i]*deg2rad)*cos(yrefval[i]*deg2rad);
     pointz[i]=sin(yrefval[i]*deg2rad);
+    ptstart[i]=tstart;
 
     if (use_ref) {
         offset=acos((pointx[i]*x_ref+pointy[i]*y_ref+pointz[i]*z_ref))/deg2rad;
@@ -208,7 +212,7 @@ int varmosaic(void){
         offset=acos((pointx[i]*avex+pointy[i]*avey+pointz[i]*avez)/pow(avex*avex+avey*avey+avez*avez,0.5))/deg2rad;
     };
     
-    sprintf(text,"Pointing direction: (%7.3f,%7.3f) rotation %.5g, offset from average %.5g\n", xrefval[i], yrefval[i],rot,offset);
+    sprintf(text,"Pointing %.15lg direction: (%7.3f,%7.3f) rotation %.5g, offset from average %.5g\n",tstart, xrefval[i], yrefval[i],rot,offset);
     HD_printf(text);
 
     if (offset>60.) {
@@ -387,8 +391,35 @@ int varmosaic(void){
     float flux, variance, exposure, exposure_flat;
     float sub_exposure, sub_variance, sub_exposure_flat;    
     int intXpixOut,intYpixOut;
+    
+    long int hp1024_in_hp16[1024*1024*12];
+    long int aux_hp1024_in_hp16[16*16*12];
+
+    double ***flux_hp16[MAX_E_RANGES];
+    //double ***var_hp16[MAX_E_RANGES];
+    double ***expo_hp16[MAX_E_RANGES];
+    double **ijd_hp16[MAX_E_RANGES];
+    int *nscw_hp16[MAX_E_RANGES];
+    double theta,phi;
+
+    int i_hp16;
+    int i_hp1024;
+    int i_hp1024_in_hp16;
+
+    for (i_hp16=0;i_hp16<nside2npix(16);i_hp16++) {
+        aux_hp1024_in_hp16[i_hp16]=0;
+    };
+
+    for (i_hp1024=0;i_hp1024<nside2npix(1024);i_hp1024++) {
+        pix2ang_ring(1024,i_hp1024,&theta,&phi);
+        ang2pix_ring(16,theta,phi,&i_hp16);
+
+        hp1024_in_hp16[i_hp1024]=aux_hp1024_in_hp16[i_hp16];
+        aux_hp1024_in_hp16[i_hp16]+=1;
+    };
 
     for(ienergy=0;ienergy<num_E_range;ienergy++){
+      expo_image[ienergy]=malloc(imagebin*imagebin*sizeof(float));
       /*in_flx_image[ienergy]=malloc(inimsize*inimsize*sizeof(float));
       in_var_image[ienergy]=malloc(inimsize*inimsize*sizeof(float));    
       in_expo_image[ienergy]=malloc(inimsize*inimsize*sizeof(float));    */
@@ -396,6 +427,20 @@ int varmosaic(void){
       sig_image[ienergy]=malloc(imagebin*imagebin*sizeof(float));
       var_image[ienergy]=malloc(imagebin*imagebin*sizeof(float));
       expo_image[ienergy]=malloc(imagebin*imagebin*sizeof(float));
+
+    // allocate healpix
+      ijd_hp16[ienergy]=malloc(nside2npix(16)*sizeof(double*));
+      nscw_hp16[ienergy]=malloc(nside2npix(16)*sizeof(double));
+      flux_hp16[ienergy]=malloc(MAXFILE*sizeof(double**));
+      //var_hp16[ienergy]=malloc(MAXFILE*sizeof(double**));
+
+      for (i_hp16=0;i_hp16<nside2npix(16);i_hp16++) {
+        nscw_hp16[ienergy][i_hp16]=0;
+        ijd_hp16[ienergy][i_hp16]=malloc(MAXFILE*sizeof(double));
+        flux_hp16[ienergy][i_hp16]=malloc(MAXFILE*sizeof(double*));
+       // var_hp16[ienergy][i_hp16]=malloc(MAXFILE*sizeof(double*));
+      };
+
     }
     exp_image=malloc(imagebin*imagebin*sizeof(float));
     
@@ -486,6 +531,7 @@ int varmosaic(void){
           status=0;
           continue;
       }; 
+
       for(ii=1;ii<=inimsize1;ii++){for(jj=1;jj<=inimsize2;jj++){/*start loop YYY for input image pixels */
 	  /* Now we are dividing this input image pixel into sub-pixels.*/
 	for(l=1; l<=pixdivide; l++){for(m=1; m<=pixdivide; m++){ /* Start loop CCC repeat for sub-pixels */
@@ -514,6 +560,43 @@ int varmosaic(void){
             exit(1);
         };
 	      }
+
+        //  <healpix
+        
+
+        double theta=(ypos+90.)/180.*M_PI;
+        double phi=xpos/180.*M_PI;
+        long ipix_1;
+        long ipix_4;
+        long ipix_16;
+        long ipix_1024;
+        
+        ang2pix_ring(1,theta,phi,&ipix_1);
+        ang2pix_ring(4,theta,phi,&ipix_4);
+        ang2pix_ring(16,theta,phi,&ipix_16);
+        ang2pix_ring(1024,theta,phi,&ipix_1024);
+            
+
+        int scw_in_pix=nscw_hp16[ienergy-1][ipix_16]-1;
+
+        if (nscw_hp16[ienergy-1][ipix_16]==0 || ijd_hp16[ienergy-1][ipix_16][nscw_hp16[ienergy-1][ipix_16]-1]!=ptstart[i]) {
+            nscw_hp16[ienergy-1][ipix_16]++;
+
+            ijd_hp16[ienergy-1][ipix_16][scw_in_pix]=ptstart[i];
+
+            flux_hp16[ienergy-1][ipix_16][scw_in_pix]=malloc((nside2npix(1024)/(nside2npix(16))*sizeof(double)));
+           // var_hp16[ienergy-1][ipix_16][scw_in_pix]=malloc((nside2npix(1024)/(nside2npix(16))*sizeof(double)));
+
+            printf("new hp16 pixel ijd %.15lg %.5lg %.5lg ipix 1,4,16,1024 %li %li %li %li row %i\n",ptstart[i],xpos,ypos,ipix_1,ipix_4,ipix_16,ipix_1024,nscw_hp16[ienergy-1][ipix_16]);
+        };
+
+
+        flux_hp16[ienergy-1][ipix_16][scw_in_pix][hp1024_in_hp16[ipix_1024]]=flux;
+        //var_hp16[ienergy-1][ipix_16][scw_in_pix][hp1024_in_hp16[ipix_1024]]=variance;
+
+        //printf("%.5lg %.5lg ipix 1,4,16,1024 %li %li %li %li\n",xpos,ypos,ipix_1,ipix_4,ipix_16,ipix_1024);
+
+        //  healpix>
 	      
 	      fits_world_to_pix(xpos,ypos,aveRA,aveDEC,xrefpixout,yrefpixout,xinc,yinc,0.0E0,out_coordtype,&XpixOut,&YpixOut,&status);
         if (status!=0) {
