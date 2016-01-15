@@ -4,6 +4,7 @@
 #include "pil.h"
 #include "headas.h"        
 #include "chealpix.h"
+#include <sys/stat.h>
 
                                                                                 
 int printsub(const char *);
@@ -14,8 +15,8 @@ int printsub(const char *);
 
 #define VARMOSAIC_VERSION "varmosaic  ver 3.0 (2005-03-07)"
 
-#define  MAXFILE 10000      /* Maximum number of input files */
-#define  MAXNAMELENGTH 1024  /* Maximum character length of file names */
+#define  MAXFILE 1000      /* Maximum number of input files */
+#define  MAXNAMELENGTH 256  /* Maximum character length of file names */
 #define  BufLen_2      MAXNAMELENGTH /* Required for pfile.h */
 #define  MAX_E_RANGES 20    /* Maximum number of energy ranges for the input images */
     
@@ -34,8 +35,9 @@ int printsub(const char *);
 
 
 /* Function prototypes */
-int varmosaic(void);
+//int varmosaic(void);
 int write_wcs(fitsfile *outfptr,double xrval,double yrval,double xrpix,double yrpix,double xinc,double yinc,double rot, char ctype[], char ctype2[], int *status);
+void writebintable ( char fn[], int n_scw, double * ijds, long int * i_hp1024, double *flux, double *variance );
 
 int varmosaic(void){
   int status = 0, i, j, nfile, hdutype,jj, l, m;
@@ -52,7 +54,7 @@ int varmosaic(void){
   char instrume[20], comment[MAXNAMELENGTH],outfile[MAXNAMELENGTH], outregion[MAXNAMELENGTH], out_coordtype[10], ctype1[20],  ctype2[20];
   char text[9999]; /* Output text messages */
   
-  double x_ref,y_ref,z_ref;
+  double x_ref=0,y_ref=0,z_ref=0;
   double aveRA, aveDEC, xrefpixout, yrefpixout;   /* WCS information of the output file. Note, xinc and yinc
 
 						     are the same as those of input files  */
@@ -68,6 +70,16 @@ int varmosaic(void){
     double offset;
 
   double dist=0.0, maxdist=-999.0,imagesize=0;
+    
+    long int i_hp1;
+    long int i_hp4;
+    long int i_hp16;
+    long int i_hp1024;
+    long int i_hp1024_in_hp16;
+    
+    double theta,phi;
+    double ra,dec;
+
 
   struct ScWimage{ /* Defined for each energy range               */
     int    intHDU; /* HDU of the intensity map                    */
@@ -84,7 +96,7 @@ int varmosaic(void){
   set_toolversion(version);
 
   /* Read parameters from the paramete file */
-   status=PILGetString("filelist", filelist);
+  status=PILGetString("filelist", filelist);
 
   /* Read ascii image list*/
   if((fp = fopen(filelist,"r"))==NULL){
@@ -392,19 +404,15 @@ int varmosaic(void){
     float sub_exposure, sub_variance, sub_exposure_flat;    
     int intXpixOut,intYpixOut;
     
-    long int hp1024_in_hp16[1024*1024*12];
+    long int * hp1024_in_hp16=malloc(nside2npix(1024)*sizeof(long int));
+    long int * inv_hp1024_in_hp16=malloc(nside2npix(1024)*sizeof(long int));
     long int aux_hp1024_in_hp16[16*16*12];
 
-    double ***flux_hp16[MAX_E_RANGES];
-    //double ***var_hp16[MAX_E_RANGES];
-    double ***expo_hp16[MAX_E_RANGES];
+    double **flux_hp16[MAX_E_RANGES];
+    double **var_hp16[MAX_E_RANGES];
+    double **expo_hp16[MAX_E_RANGES];
     double **ijd_hp16[MAX_E_RANGES];
     int *nscw_hp16[MAX_E_RANGES];
-    double theta,phi;
-
-    int i_hp16;
-    int i_hp1024;
-    int i_hp1024_in_hp16;
 
     for (i_hp16=0;i_hp16<nside2npix(16);i_hp16++) {
         aux_hp1024_in_hp16[i_hp16]=0;
@@ -416,7 +424,13 @@ int varmosaic(void){
 
         hp1024_in_hp16[i_hp1024]=aux_hp1024_in_hp16[i_hp16];
         aux_hp1024_in_hp16[i_hp16]+=1;
+        inv_hp1024_in_hp16[i_hp16*4096+hp1024_in_hp16[i_hp1024]]=i_hp1024;
     };
+    
+    for (i_hp16=0;i_hp16<nside2npix(16);i_hp16++) {
+        printf("total number of pixels %li\n",aux_hp1024_in_hp16[i_hp16]);
+    };
+
 
     for(ienergy=0;ienergy<num_E_range;ienergy++){
       expo_image[ienergy]=malloc(imagebin*imagebin*sizeof(float));
@@ -429,16 +443,23 @@ int varmosaic(void){
       expo_image[ienergy]=malloc(imagebin*imagebin*sizeof(float));
 
     // allocate healpix
-      ijd_hp16[ienergy]=malloc(nside2npix(16)*sizeof(double*));
-      nscw_hp16[ienergy]=malloc(nside2npix(16)*sizeof(double));
-      flux_hp16[ienergy]=malloc(MAXFILE*sizeof(double**));
-      //var_hp16[ienergy]=malloc(MAXFILE*sizeof(double**));
+      if((ijd_hp16[ienergy]=malloc(nside2npix(16)*sizeof(double*)))==NULL) {
+            printf("unable to allocate!");
+      };
+
+      if((nscw_hp16[ienergy]=malloc(nside2npix(16)*sizeof(double)))==NULL) {
+            printf("unable to allocate!");
+      };
+      if((flux_hp16[ienergy]=malloc(nside2npix(16)*sizeof(double*)))==NULL) {
+            printf("unable to allocate!");
+      };
+      var_hp16[ienergy]=malloc(MAXFILE*sizeof(double*));
 
       for (i_hp16=0;i_hp16<nside2npix(16);i_hp16++) {
         nscw_hp16[ienergy][i_hp16]=0;
         ijd_hp16[ienergy][i_hp16]=malloc(MAXFILE*sizeof(double));
-        flux_hp16[ienergy][i_hp16]=malloc(MAXFILE*sizeof(double*));
-       // var_hp16[ienergy][i_hp16]=malloc(MAXFILE*sizeof(double*));
+        flux_hp16[ienergy][i_hp16]=malloc(4096*sizeof(double));
+        var_hp16[ienergy][i_hp16]=malloc(4096*sizeof(double));
       };
 
     }
@@ -492,7 +513,6 @@ int varmosaic(void){
           in_flx_image[ienergy-1]=malloc(inimsize1*inimsize2*sizeof(float));
           in_var_image[ienergy-1]=malloc(inimsize1*inimsize2*sizeof(float));    
           in_expo_image[ienergy-1]=malloc(inimsize1*inimsize2*sizeof(float));    
-
 
           fits_read_img_coord(infptr, &ScWxrefval, &ScWyrefval, &ScWxrefpix, &ScWyrefpix,&xinc,&yinc,
                   &ScWrot, coordtype, &status);
@@ -577,22 +597,33 @@ int varmosaic(void){
         ang2pix_ring(1024,theta,phi,&ipix_1024);
             
 
-        int scw_in_pix=nscw_hp16[ienergy-1][ipix_16]-1;
+        int scw_in_pix=nscw_hp16[ienergy-1][ipix_16];
+        int i_s;
 
-        if (nscw_hp16[ienergy-1][ipix_16]==0 || ijd_hp16[ienergy-1][ipix_16][nscw_hp16[ienergy-1][ipix_16]-1]!=ptstart[i]) {
-            nscw_hp16[ienergy-1][ipix_16]++;
 
-            ijd_hp16[ienergy-1][ipix_16][scw_in_pix]=ptstart[i];
+        if (scw_in_pix==0 || ijd_hp16[ienergy-1][ipix_16][scw_in_pix-1]!=ptstart[i]) {
+            scw_in_pix=++nscw_hp16[ienergy-1][ipix_16];
 
-            flux_hp16[ienergy-1][ipix_16][scw_in_pix]=malloc((nside2npix(1024)/(nside2npix(16))*sizeof(double)));
-           // var_hp16[ienergy-1][ipix_16][scw_in_pix]=malloc((nside2npix(1024)/(nside2npix(16))*sizeof(double)));
+            ijd_hp16[ienergy-1][ipix_16][scw_in_pix-1]=ptstart[i];
 
-            printf("new hp16 pixel ijd %.15lg %.5lg %.5lg ipix 1,4,16,1024 %li %li %li %li row %i\n",ptstart[i],xpos,ypos,ipix_1,ipix_4,ipix_16,ipix_1024,nscw_hp16[ienergy-1][ipix_16]);
+           // flux_hp16[ienergy-1][ipix_16][scw_in_pix-1]=malloc((nside2npix(1024)/(nside2npix(16))*sizeof(double)));
+           // var_hp16[ienergy-1][ipix_16][scw_in_pix-1]=malloc((nside2npix(1024)/(nside2npix(16))*sizeof(double)));
+                
+            flux_hp16[ienergy-1][ipix_16]=realloc(flux_hp16[ienergy-1][ipix_16],(nside2npix(1024)/(nside2npix(16))*sizeof(double)*scw_in_pix));
+            var_hp16[ienergy-1][ipix_16]=realloc(var_hp16[ienergy-1][ipix_16],(nside2npix(1024)/(nside2npix(16))*sizeof(double)*scw_in_pix));
+
+           // printf("new hp16 pixel ijd %.15g %.5g %.5g ipix 1,4,16,1024 %li %li %li %li row %i\n",ptstart[i],xpos,ypos,ipix_1,ipix_4,ipix_16,ipix_1024,nscw_hp16[ienergy-1][ipix_16]);
+            for (i_s=0;i_s<4096;i_s++) {
+                flux_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+i_s]=0;
+                var_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+i_s]=0;
+            };
         };
 
 
-        flux_hp16[ienergy-1][ipix_16][scw_in_pix][hp1024_in_hp16[ipix_1024]]=flux;
-        //var_hp16[ienergy-1][ipix_16][scw_in_pix][hp1024_in_hp16[ipix_1024]]=variance;
+        //printf("%.li %.li %.li\n",ipix_16,ipix_1024,hp1024_in_hp16[ipix_1024]);
+        //flux_hp16[ienergy-1][ipix_16][scw_in_pix-1][0]=flux;
+        flux_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]=flux;
+        var_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]=variance;
 
         //printf("%.5lg %.5lg ipix 1,4,16,1024 %li %li %li %li\n",xpos,ypos,ipix_1,ipix_4,ipix_16,ipix_1024);
 
@@ -663,6 +694,57 @@ int varmosaic(void){
       free(expo_image[i]);
     }
     free(exp_image);
+    
+// write hp
+    for (i_hp16=0;i_hp16<nside2npix(16);i_hp16++) {
+        if (nscw_hp16[0][i_hp16]==0) continue;
+    
+        char fn[255];
+        char f_fn[255];
+        char dir1[255];
+        char dir4[255];
+        int i_scw;
+        int i_s;
+
+
+        pix2ang_ring(16,i_hp16,&theta,&phi);
+        ang2pix_ring(4,theta,phi,&i_hp4);
+        ang2pix_ring(1,theta,phi,&i_hp1);
+
+        sprintf(dir1,"%s/hp_%li",getenv("HP_DATA"),i_hp1);
+        sprintf(dir4,"%s/hp_%li",dir1,i_hp4);
+        sprintf(fn,"%s/hp_%li.txt",dir4,i_hp16);
+        sprintf(f_fn,"!%s/hp_%li.fits",dir4,i_hp16);
+        mkdir(dir1,S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+        mkdir(dir4,S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+        
+        printf("writing %s of %i\n",f_fn,nscw_hp16[0][i_hp16]);
+
+        writebintable(f_fn,nscw_hp16[0][i_hp16],ijd_hp16[0][i_hp16],inv_hp1024_in_hp16+i_hp16*4096,flux_hp16[0][i_hp16],var_hp16[0][i_hp16]);
+
+        if (0) {
+            printf("writing %s of %i\n",fn,nscw_hp16[0][i_hp16]);
+
+            FILE * f = fopen(fn,"w");
+            for (i_scw=0;i_scw<nscw_hp16[0][i_hp16];i_scw++) {
+                for(ienergy=0;ienergy<num_E_range;ienergy++){
+                    for (i_s=0;i_s<4096;i_s++) {
+                        //printf("%i %i %i\n",ienergy,i_scw,i);
+                        i_hp1024=inv_hp1024_in_hp16[i_hp16*4096+i_s];
+                        pix2ang_ring(1024,i_hp1024,&theta,&phi);
+                        long int i_tmp;
+                        ang2pix_ring(16,theta,phi,&i_tmp);
+                        dec=theta/M_PI*180.-90.;
+                        ra=phi/M_PI*180.;
+                        fprintf(f,"%i %i %.15g %i %li %.5g %.5g %.5g %.5g %.5g %li\n",ienergy,i_scw,ijd_hp16[ienergy][i_hp16][i_scw],i,i_hp1024,ra,dec,flux_hp16[ienergy][i_hp16][i_scw*496+i_s],var_hp16[ienergy][i_hp16][4096*i_scw+i_s],i_tmp);
+                    };
+                };
+            };
+            
+            fclose(f);
+        };
+    };
+// done write hp
   }/*end of block ZZZ finish writing images*/
   
   /* Close the output file. */
@@ -689,4 +771,104 @@ int write_wcs(fitsfile *outfptr,double xrval,double yrval,double xrpix,double yr
   fits_write_key_dbl(outfptr,"CDELT1",xinc, -15,"X increment (deg)",status);  
   fits_write_key_dbl(outfptr,"CDELT2",yinc, -15,"Y increment (deg)",status);  
   fits_write_key_dbl(outfptr,"CROTA2",rot, -15,"Rotation",status);  
+}
+
+/*--------------------------------------------------------------------------*/
+void printerror( int status)
+{
+    /*****************************************************/
+    /* Print out cfitsio error messages and exit program */
+    /*****************************************************/
+
+
+    if (status)
+    {
+       fits_report_error(stderr, status); /* print error report */
+
+       exit( status );    /* terminate the program, returning error status */
+    }
+    return;
+}
+
+void writebintable ( char fn[], int n_scw, double * ijds, long int * i_hp1024, double *flux, double *variance ) {
+    fitsfile *fptr;       
+    int status, hdutype;
+    long firstrow, firstelem;
+
+    int tfields   = 1; 
+
+    char extname[] = "IJD";           /* extension name */
+    /* define the name, datatype, and physical units for the 3 columns */
+    char *ttype[] = { "IJD" };
+    char *tform[] = { "1E"  };
+    char *tunit[] = { "days" };
+
+    /* define the name diameter, and density of each planet */
+
+    status=0;
+
+    printf("f 1\n");
+
+    /* open the FITS file containing a primary array and an ASCII table */
+    if ( fits_create_file(&fptr, fn, &status) ) 
+         printerror( status );
+    
+    printf("f 1.\n");
+    
+
+    long *paxes[] = { 10 ,10  };
+    if ( fits_create_img(fptr, USHORT_IMG, 2, paxes, &status) ) 
+         printerror( status );
+
+    //if ( fits_open_file(&fptr, fn, READWRITE, &status) ) 
+      //   printerror( status );
+    printf("f 2\n");
+
+    //if ( fits_movabs_hdu(fptr, 1, &hdutype, &status) ) /* move to 2nd HDU */
+    //     printerror( status );
+    //printf("f 3\n");
+
+    /* append a new empty binary table onto the FITS file */
+    if ( fits_create_tbl( fptr, BINARY_TBL, n_scw, tfields, ttype, tform,
+                tunit, extname, &status) )
+         printerror( status );
+
+    firstrow  = 1;  /* first row in table to write   */
+    firstelem = 1;  /* first element in row  (ignored in ASCII tables) */
+
+    /* write names to the first column (character strings) */
+    /* write diameters to the second column (longs) */
+    /* write density to the third column (floats) */
+
+    fits_write_col(fptr, TDOUBLE, 1, firstrow, firstelem, n_scw, ijds,
+                   &status);
+    
+    tfields   = 3; 
+    
+    printf("f 3\n");
+    
+    long *axis[] = { 4096 };
+    if ( fits_create_img(fptr, ULONG_IMG, 1, axis, &status) ) 
+         printerror( status );
+    if ( fits_write_img(fptr, TULONG, 1, 4096, i_hp1024, &status) )
+        printerror( status );
+
+    long *axes[] = { 4096, n_scw };
+    if ( fits_create_img(fptr, DOUBLE_IMG, 2, axes, &status) ) 
+         printerror( status );
+    if ( fits_write_img(fptr, TDOUBLE, 1, 4096*n_scw, flux, &status) )
+        printerror( status );
+    
+    printf("f 4\n");
+
+    if ( fits_create_img(fptr, DOUBLE_IMG, 2, axes, &status) ) 
+         printerror( status );
+    if ( fits_write_img(fptr, TDOUBLE, 1, 4096*n_scw, variance, &status) )
+        printerror( status );
+    
+    if ( fits_close_file(fptr, &status) )       /* close the FITS file */
+         printerror( status );
+    
+
+    return;
 }
