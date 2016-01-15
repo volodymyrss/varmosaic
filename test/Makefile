@@ -8,4 +8,4 @@ test:
 	plist varmosaic
 
 
-	../varmosaic filelist=image_list.txt outimage=mosaic.fits outregion=mosaic.reg coordtype=-TAN pixdivide=1
+	../varmosaic filelist=image_list.txt outimage=mosaic.fits outregion=mosaic.reg coordtype=-TAN pixdivide=3

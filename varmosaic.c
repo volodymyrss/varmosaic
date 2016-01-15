@@ -411,6 +411,7 @@ int varmosaic(void){
     double **flux_hp16[MAX_E_RANGES];
     double **var_hp16[MAX_E_RANGES];
     double **expo_hp16[MAX_E_RANGES];
+    int **nsubpx_hp16[MAX_E_RANGES];
     double **ijd_hp16[MAX_E_RANGES];
     int *nscw_hp16[MAX_E_RANGES];
 
@@ -453,13 +454,23 @@ int varmosaic(void){
       if((flux_hp16[ienergy]=malloc(nside2npix(16)*sizeof(double*)))==NULL) {
             printf("unable to allocate!");
       };
-      var_hp16[ienergy]=malloc(MAXFILE*sizeof(double*));
+      if((var_hp16[ienergy]=malloc(nside2npix(16)*sizeof(double*)))==NULL) {
+            printf("unable to allocate!");
+      };
+      if((expo_hp16[ienergy]=malloc(nside2npix(16)*sizeof(double*)))==NULL) {
+            printf("unable to allocate!");
+      };
+      if((nsubpx_hp16[ienergy]=malloc(nside2npix(16)*sizeof(int*)))==NULL) {
+            printf("unable to allocate!");
+      };
 
       for (i_hp16=0;i_hp16<nside2npix(16);i_hp16++) {
         nscw_hp16[ienergy][i_hp16]=0;
         ijd_hp16[ienergy][i_hp16]=malloc(MAXFILE*sizeof(double));
         flux_hp16[ienergy][i_hp16]=malloc(4096*sizeof(double));
         var_hp16[ienergy][i_hp16]=malloc(4096*sizeof(double));
+        expo_hp16[ienergy][i_hp16]=malloc(4096*sizeof(double));
+        nsubpx_hp16[ienergy][i_hp16]=malloc(4096*sizeof(int));
       };
 
     }
@@ -580,6 +591,12 @@ int varmosaic(void){
             exit(1);
         };
 	      }
+		
+        /* Each sub-pixel carries the associated values,
+		   sub_exposure=exposure/sub_pixel_numbers, sub_pixel_flux=flux, and sub_variance=sub_pixel_numbers*variance.*/
+		sub_exposure = exposure/ (float)(pow(pixdivide,2));
+		sub_exposure_flat = exposure_flat/ (float)(pow(pixdivide,2));
+		sub_variance = variance*(float) pow(pixdivide,2);
 
         //  <healpix
         
@@ -611,19 +628,36 @@ int varmosaic(void){
                 
             flux_hp16[ienergy-1][ipix_16]=realloc(flux_hp16[ienergy-1][ipix_16],(nside2npix(1024)/(nside2npix(16))*sizeof(double)*scw_in_pix));
             var_hp16[ienergy-1][ipix_16]=realloc(var_hp16[ienergy-1][ipix_16],(nside2npix(1024)/(nside2npix(16))*sizeof(double)*scw_in_pix));
+            nsubpx_hp16[ienergy-1][ipix_16]=realloc(nsubpx_hp16[ienergy-1][ipix_16],(nside2npix(1024)/(nside2npix(16))*sizeof(double)*scw_in_pix));
+            expo_hp16[ienergy-1][ipix_16]=realloc(expo_hp16[ienergy-1][ipix_16],(nside2npix(1024)/(nside2npix(16))*sizeof(double)*scw_in_pix));
 
            // printf("new hp16 pixel ijd %.15g %.5g %.5g ipix 1,4,16,1024 %li %li %li %li row %i\n",ptstart[i],xpos,ypos,ipix_1,ipix_4,ipix_16,ipix_1024,nscw_hp16[ienergy-1][ipix_16]);
             for (i_s=0;i_s<4096;i_s++) {
                 flux_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+i_s]=0;
                 var_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+i_s]=0;
+                nsubpx_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+i_s]=0;
+                expo_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+i_s]=0;
             };
         };
 
 
         //printf("%.li %.li %.li\n",ipix_16,ipix_1024,hp1024_in_hp16[ipix_1024]);
         //flux_hp16[ienergy-1][ipix_16][scw_in_pix-1][0]=flux;
-        flux_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]=flux;
-        var_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]=variance;
+        int ns=nsubpx_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]];
+
+        flux_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]*=ns;
+        flux_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]+=flux;
+        flux_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]/=(ns+1);
+        
+        var_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]*=ns;
+        var_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]+=sub_variance;
+        var_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]/=(ns+1);
+        
+        expo_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]*=ns;
+        expo_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]+=sub_exposure;
+        expo_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]/=(ns+1);
+
+        nsubpx_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]=ns+1;
 
         //printf("%.5lg %.5lg ipix 1,4,16,1024 %li %li %li %li\n",xpos,ypos,ipix_1,ipix_4,ipix_16,ipix_1024);
 
@@ -639,11 +673,6 @@ int varmosaic(void){
 		intYpixOut=floor(YpixOut+0.5);
 		/* kk is the suffix for the output image pixels */
 		kk = intXpixOut-1 +(intYpixOut-1)*imagebin;
-		/* Each sub-pixel carries the associated values,
-		   sub_exposure=exposure/sub_pixel_numbers, sub_pixel_flux=flux, and sub_variance=sub_pixel_numbers*variance.*/
-		sub_exposure = exposure/ (float)(pow(pixdivide,2));
-		sub_exposure_flat = exposure_flat/ (float)(pow(pixdivide,2));
-		sub_variance = variance*(float) pow(pixdivide,2);
         if(ienergy==1){exp_image[kk]=exp_image[kk]+sub_exposure_flat;}
         expo_image[ienergy-1][kk]=expo_image[ienergy-1][kk]+sub_exposure;
 		if(var_image[ienergy-1][kk]>0.0){
