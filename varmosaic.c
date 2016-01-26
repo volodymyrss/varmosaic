@@ -37,7 +37,7 @@ int printsub(const char *);
 /* Function prototypes */
 //int varmosaic(void);
 int write_wcs(fitsfile *outfptr,double xrval,double yrval,double xrpix,double yrpix,double xinc,double yinc,double rot, char ctype[], char ctype2[], int *status);
-void writebintable ( char fn[], int n_scw, double * ijds, long int * i_hp1024, double *flux, double *variance );
+void writebintable ( char fn[], int n_scw, double * ijds, long int * i_hp1024, double *flux, double *variance, double *exposure, int *nsubpx );
 
 int varmosaic(void){
   int status = 0, i, j, nfile, hdutype,jj, l, m;
@@ -50,16 +50,21 @@ int varmosaic(void){
   double xrefval[MAXFILE], yrefval[MAXFILE], xrefpix, yrefpix, xinc, yinc, rot;
   double pointx[MAXFILE],pointy[MAXFILE],pointz[MAXFILE],ptstart[MAXFILE];
   double avex=0.0,avey=0.0,avez=0.0,deg2rad=1.745329252E-2;
+  double ngood=0;
   double tstart;
   char instrume[20], comment[MAXNAMELENGTH],outfile[MAXNAMELENGTH], outregion[MAXNAMELENGTH], out_coordtype[10], ctype1[20],  ctype2[20];
   char text[9999]; /* Output text messages */
+
+  double maxoffset=60;
   
   double x_ref=0,y_ref=0,z_ref=0;
   double aveRA, aveDEC, xrefpixout, yrefpixout;   /* WCS information of the output file. Note, xinc and yinc
 
+
 						     are the same as those of input files  */
   int imagebin;    /* Output image bins (X and Y same)  */
   int num_E_range=-1; /* Number of energy ranges in the input images/output image */
+
   
   int clobber; /* clobber the output image or not */
   int use_ref=0; /* clobber the output image or not */
@@ -107,9 +112,12 @@ int varmosaic(void){
     sprintf(text,"##### Input file \"%s\" opened\n",filelist);
     HD_printf(text);
     i = 0;
+    inimages_mode[i]=0;
     while(fgets(tmp, MAXNAMELENGTH,fp)!=NULL&&sscanf(tmp,"%s",inimages[i])>0){
       i++;
       inimages_mode[i]=0;
+      sprintf(text,"file in the input list: %s %d mode %i\n", inimages[i],nfile,inimages_mode[i]);  
+      HD_printf(text);
     }
     fclose(fp);
   }
@@ -153,6 +161,9 @@ int varmosaic(void){
       return status;
     }
   }
+      
+  status=PILGetReal("maxoffset",&maxoffset);
+  sprintf(text,"##### Maximum allowed offset %.5lg",maxoffset);
 
   status=PILGetInt("outimagesize",&imagebin);
   if(imagebin > 0){
@@ -221,10 +232,12 @@ int varmosaic(void){
     if (use_ref) {
         offset=acos((pointx[i]*x_ref+pointy[i]*y_ref+pointz[i]*z_ref))/deg2rad;
     } else {
-        offset=acos((pointx[i]*avex+pointy[i]*avey+pointz[i]*avez)/pow(avex*avex+avey*avey+avez*avez,0.5))/deg2rad;
+        if (ngood>0) {
+            offset=acos((pointx[i]*avex+pointy[i]*avey+pointz[i]*avez)/pow(avex*avex+avey*avey+avez*avez,0.5))/deg2rad;
+        } else offset=0;
     };
     
-    sprintf(text,"Pointing %.15lg direction: (%7.3f,%7.3f) rotation %.5g, offset from average %.5g\n",tstart, xrefval[i], yrefval[i],rot,offset);
+    sprintf(text,"Pointing %.15lg direction: (%7.3f,%7.3f) rotation %.5g, offset from average  (%.5g,%.5g) %.5g\n",tstart, xrefval[i], yrefval[i],rot,avex,avey,avez,offset);
     HD_printf(text);
 
     if (offset>60.) {
@@ -238,6 +251,7 @@ int varmosaic(void){
     avex= avex + pointx[i];
     avey= avey + pointy[i];
     avez= avez + pointz[i];
+    ngood+=1;
 
     
     
@@ -311,14 +325,16 @@ int varmosaic(void){
        Create the output image mosaic file having the same number of energy bands as
        input imagess,  write necessary keywords to the output file, in particular WCS keywords.*/
     
-    for(i=0;i<nfile;i++){
-        if (inimages_mode[i]!=0) {
-            continue;
-        };
-      dist = sqrt((avex-pointx[i])*(avex-pointx[i])+(avey-pointy[i])*(avey-pointy[i])+(avez-pointz[i])*(avez-pointz[i]));
-      if(dist > maxdist){maxdist = dist;}
-    }
-    maxdist = 2.0*asin(maxdist/2.0)/deg2rad;
+    if (nfile>1) {
+        for(i=0;i<nfile;i++){
+            if (inimages_mode[i]!=0) {
+                continue;
+            };
+          dist = sqrt((avex-pointx[i])*(avex-pointx[i])+(avey-pointy[i])*(avey-pointy[i])+(avez-pointz[i])*(avez-pointz[i]));
+          if(dist > maxdist){maxdist = dist;}
+        }
+        maxdist = 2.0*asin(maxdist/2.0)/deg2rad;
+    } else maxdist=0;
     sprintf(text,"\nMaximum distance of the mosaic center and each ScW pointing :%8.3f degree\n", maxdist);
     HD_printf(text);
     /* ISGRI FOV = 30.6 deg x 30.6 deg which is covered with a circle with 21.6 deg radius.
@@ -428,10 +444,6 @@ int varmosaic(void){
         inv_hp1024_in_hp16[i_hp16*4096+hp1024_in_hp16[i_hp1024]]=i_hp1024;
     };
     
-    for (i_hp16=0;i_hp16<nside2npix(16);i_hp16++) {
-        printf("total number of pixels %li\n",aux_hp1024_in_hp16[i_hp16]);
-    };
-
 
     for(ienergy=0;ienergy<num_E_range;ienergy++){
       expo_image[ienergy]=malloc(imagebin*imagebin*sizeof(float));
@@ -565,6 +577,9 @@ int varmosaic(void){
 
       for(ii=1;ii<=inimsize1;ii++){for(jj=1;jj<=inimsize2;jj++){/*start loop YYY for input image pixels */
 	  /* Now we are dividing this input image pixel into sub-pixels.*/
+
+        long int subpixels_filled=0;
+
 	for(l=1; l<=pixdivide; l++){for(m=1; m<=pixdivide; m++){ /* Start loop CCC repeat for sub-pixels */
 	  for(ienergy=1;ienergy<=num_E_range;ienergy++){/*start loop XXX for energy bands */
 	    /* Read all the flux and variance maps in the input file 
@@ -594,8 +609,8 @@ int varmosaic(void){
 		
         /* Each sub-pixel carries the associated values,
 		   sub_exposure=exposure/sub_pixel_numbers, sub_pixel_flux=flux, and sub_variance=sub_pixel_numbers*variance.*/
-		sub_exposure = exposure/ (float)(pow(pixdivide,2));
-		sub_exposure_flat = exposure_flat/ (float)(pow(pixdivide,2));
+		sub_exposure = exposure; /// (float)(pow(pixdivide,2));
+		sub_exposure_flat = exposure_flat; // (float)(pow(pixdivide,2));
 		sub_variance = variance*(float) pow(pixdivide,2);
 
         //  <healpix
@@ -612,6 +627,10 @@ int varmosaic(void){
         ang2pix_ring(4,theta,phi,&ipix_4);
         ang2pix_ring(16,theta,phi,&ipix_16);
         ang2pix_ring(1024,theta,phi,&ipix_1024);
+
+        /*if (ipix_1024==8895424) {
+            printf("hp1024 pixel %li\n",ipix_1024);
+        };*/
             
 
         int scw_in_pix=nscw_hp16[ienergy-1][ipix_16];
@@ -649,17 +668,30 @@ int varmosaic(void){
         flux_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]+=flux;
         flux_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]/=(ns+1);
         
+
+/*
+        if (var_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]>0)
+            var_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]=1./var_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]];
+        var_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]+=1./sub_variance;
+        var_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]=1./var_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]];
+*/
         var_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]*=ns;
-        var_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]+=sub_variance;
+        var_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]+=variance;
         var_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]/=(ns+1);
         
         expo_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]*=ns;
-        expo_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]+=sub_exposure;
+        expo_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]+=exposure;
         expo_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]/=(ns+1);
 
         nsubpx_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]]=ns+1;
 
-        //printf("%.5lg %.5lg ipix 1,4,16,1024 %li %li %li %li\n",xpos,ypos,ipix_1,ipix_4,ipix_16,ipix_1024);
+
+        subpixels_filled+=1;
+
+        if (flux/pow(sub_variance,0.5)>5.) {
+            printf("%.5lg %.5lg ipix 1,4,16,1024 %li %li %li %li flux %.5lg var %.5lg sig %.5lg\n",xpos,ypos,ipix_1,ipix_4,ipix_16,ipix_1024,flux,sub_variance,flux/pow(sub_variance,0.5));
+            printf("hp flux %.5lg var %.5lg ns %i\n",flux_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]],var_hp16[ienergy-1][ipix_16][(scw_in_pix-1)*4096+hp1024_in_hp16[ipix_1024]],ns);
+        };
 
         //  healpix>
 	      
@@ -691,6 +723,9 @@ int varmosaic(void){
 	    }
 	  } /* end XXX, loop for energy bin for each pixel. Note, energy loop is inside pixel loop, assuming all the enegy bands have the same WCS information */
 	}}/* end CCC repeating for the number of sub-pixels */
+
+       // printf("subpixels used: %li\n",subpixels_filled);
+
       }}  /* end YYY, loop for each pixel of an input image*/
     }     /* end AA, loop for input images */
 
@@ -749,7 +784,7 @@ int varmosaic(void){
         
         printf("writing %s of %i\n",f_fn,nscw_hp16[0][i_hp16]);
 
-        writebintable(f_fn,nscw_hp16[0][i_hp16],ijd_hp16[0][i_hp16],inv_hp1024_in_hp16+i_hp16*4096,flux_hp16[0][i_hp16],var_hp16[0][i_hp16]);
+        writebintable(f_fn,nscw_hp16[0][i_hp16],ijd_hp16[0][i_hp16],inv_hp1024_in_hp16+i_hp16*4096,flux_hp16[0][i_hp16],var_hp16[0][i_hp16],expo_hp16[0][i_hp16],nsubpx_hp16[0][i_hp16]);
 
         if (0) {
             printf("writing %s of %i\n",fn,nscw_hp16[0][i_hp16]);
@@ -819,7 +854,7 @@ void printerror( int status)
     return;
 }
 
-void writebintable ( char fn[], int n_scw, double * ijds, long int * i_hp1024, double *flux, double *variance ) {
+void writebintable ( char fn[], int n_scw, double * ijds, long int * i_hp1024, double *flux, double *variance, double *exposure, int *nsubpx ) {
     fitsfile *fptr;       
     int status, hdutype;
     long firstrow, firstelem;
@@ -893,6 +928,18 @@ void writebintable ( char fn[], int n_scw, double * ijds, long int * i_hp1024, d
     if ( fits_create_img(fptr, DOUBLE_IMG, 2, axes, &status) ) 
          printerror( status );
     if ( fits_write_img(fptr, TDOUBLE, 1, 4096*n_scw, variance, &status) )
+        printerror( status );
+    
+
+
+    if ( fits_create_img(fptr, DOUBLE_IMG, 2, axes, &status) ) 
+         printerror( status );
+    if ( fits_write_img(fptr, TDOUBLE, 1, 4096*n_scw, exposure, &status) )
+        printerror( status );
+    
+    if ( fits_create_img(fptr, SHORT_IMG, 2, axes, &status) ) 
+         printerror( status );
+    if ( fits_write_img(fptr, TSHORT, 1, 4096*n_scw, nsubpx, &status) )
         printerror( status );
     
     if ( fits_close_file(fptr, &status) )       /* close the FITS file */
