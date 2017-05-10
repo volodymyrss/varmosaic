@@ -196,6 +196,11 @@ int varmosaic(void){
     fits_movabs_hdu(infptr, 3, &hdutype, &status);
 
     fits_read_key_str(infptr, "INSTRUME", instrume,comment,&status);
+
+	/*fits_movabs_hdu(infptr, 1, &hdutype, &status);
+    fits_read_key_lng(infptr, "NAXIS1",   &inimsize1, comment, &status);
+    fits_read_key_lng(infptr, "NAXIS2",   &inimsize2, comment, &status);*/
+
     fits_read_img_coord(infptr, &xrefval[i], &yrefval[i], &xrefpix, &yrefpix, &xinc,  &yinc,
 			&rot, coordtype, &status);
     pointx[i]=cos(xrefval[i]*deg2rad)*cos(yrefval[i]*deg2rad);
@@ -223,49 +228,83 @@ int varmosaic(void){
     avey= avey + pointy[i];
     avez= avez + pointz[i];
 
-    
+    int mode=-1;
     
     if(num_E_range<=0){/* block CCC */
-      /* Look into the first image file structure to know the energy bands*/
-      {int hdunum,ii=0;
-      char imatype[20];
-      double E_min, E_max;
-      fits_get_num_hdus(infptr, &hdunum, &status);
-      sprintf(text,"Looking into the structure of the first image. Number of HDU = %d\n", hdunum);
-      HD_printf(text);
-      for(j=1;j<=hdunum;j++){
-	fits_movabs_hdu(infptr, j, &hdutype, &status);
-	fits_read_key_lng(infptr, "NAXIS1",   &inimsize, comment, &status);
-	fits_read_key_str(infptr, "IMATYPE", imatype,comment, &status);
-	fits_read_key_dbl(infptr, "E_MIN",   &E_min, comment, &status);
-	fits_read_key_dbl(infptr, "E_MAX",   &E_max, comment, &status);
-	if(strstr(imatype,"INTENSITY") != NULL){
-	  ScW[ii].intHDU = j;
-	  ScW[ii].E_min = E_min;
-	  ScW[ii].E_max = E_max;
-	}else if(strstr(imatype,"VARIANCE") != NULL) {
-	  ScW[ii].varHDU = j;
-	  //ii++;
-	}else if(strstr(imatype,"EXPOSURE") != NULL && strstr(imatype,"EXPOSUREFLAT") == NULL) {
-	  ScW[ii].expoHDU = j;
-	  ii++;
-	}
-	if(status !=0){
-	  status = 0;
-	}else{
-	  sprintf(text,"HDU = %2d IMATYPE = %12s E_min = %7.2f keV E_max = %7.2f keV\n", j, imatype, E_min, E_max);
-	  HD_printf(text);
-}
-      }
-      num_E_range = ii;
-      sprintf(text,"Number of energy ranges = %d\n", num_E_range);
-      HD_printf(text);
-      for(ii=0;ii<num_E_range;ii++){
-	sprintf(text,"Energy range:%d Intensity HDU:%d Variance HDU:%d Exposure HDU:%d E_min %4.2f keV E_max %4.2f keV\n", ii+1, ScW[ii].intHDU,ScW[ii].varHDU,ScW[ii].expoHDU,ScW[ii].E_min,ScW[ii].E_max);
-	HD_printf(text);
-      }
-      HD_printf("");
-      }
+        /* Look into the first image file structure to know the energy bands*/
+        {
+            int hdunum,ii=0;
+            char imatype[20];
+            double E_min, E_max;
+            fits_get_num_hdus(infptr, &hdunum, &status);
+            sprintf(text,"Looking into the structure of the first image. Number of HDU = %d\n", hdunum);
+            HD_printf(text);
+            for(j=2;j<=hdunum;j++){
+                fits_movabs_hdu(infptr, j, &hdutype, &status);
+                fits_read_key_lng(infptr, "NAXIS1",   &inimsize, comment, &status);
+                fits_read_key_str(infptr, "IMATYPE", imatype,comment, &status);
+                fits_read_key_dbl(infptr, "E_MIN",   &E_min, comment, &status);
+                fits_read_key_dbl(infptr, "E_MAX",   &E_max, comment, &status);
+
+                if(mode < 0 && strstr(imatype,"INTENSITY") != NULL) {
+                    mode=1;
+                    ScW[ii].varHDU = j;
+                    sprintf(text,"starts with intensity");
+                    HD_printf(text);
+                };
+
+                if(mode < 0 && strstr(imatype,"VARIANCE") != NULL) {
+                    mode=1;
+                    ScW[ii].varHDU = j;
+                };
+
+                if (mode==0) {
+                    if(strstr(imatype,"INTENSITY") != NULL) {
+                        ScW[ii].intHDU = j;
+                        ScW[ii].E_min = E_min;
+                        ScW[ii].E_max = E_max;
+                    }else if(strstr(imatype,"VARIANCE") != NULL) {
+                        ScW[ii].varHDU = j;
+                        //ii++;
+                    }else if(strstr(imatype,"EXPOSURE") != NULL && strstr(imatype,"EXPOSUREFLAT") == NULL) {
+                        ScW[ii].expoHDU = j;
+                        ii++;
+                    }
+                    if(status !=0){
+                        status = 0;
+                    }else{
+                        sprintf(text,"ISGRI HDU = %2d IMATYPE = %12s E_min = %7.2f keV E_max = %7.2f keV\n", j, imatype, E_min, E_max);
+                        HD_printf(text);
+                    }
+                } else {
+                    if (strstr(imatype,"RECONSTRUCTED") != NULL){
+                        ScW[ii].intHDU = j;
+                        ScW[ii].E_min = E_min;
+                        ScW[ii].E_max = E_max;
+                        ii++;
+                    }else if(strstr(imatype,"VARIANCE") != NULL) {
+                        ScW[ii].varHDU = j;
+                        ScW[ii].E_min = E_min;
+                        ScW[ii].E_max = E_max;
+                    }
+                    ScW[ii].expoHDU = -1;
+                    if(status !=0){
+                        status = 0;
+                    }else{
+                        sprintf(text,"JEMX HDU = %2d IMATYPE = %12s E_min = %7.2f keV E_max = %7.2f keV\n", j, imatype, E_min, E_max);
+                        HD_printf(text);
+                    };
+                };
+            }
+            num_E_range = ii;
+            sprintf(text,"Number of energy ranges = %d\n", num_E_range);
+            HD_printf(text);
+            for(ii=0;ii<num_E_range;ii++){
+                sprintf(text,"Energy range:%d Intensity HDU:%d Variance HDU:%d Exposure HDU:%d E_min %4.2f keV E_max %4.2f keV\n", ii+1, ScW[ii].intHDU,ScW[ii].varHDU,ScW[ii].expoHDU,ScW[ii].E_min,ScW[ii].E_max);
+                HD_printf(text);
+            }
+            HD_printf("");
+        }
     }/*End CCC for the first input file */
       fits_close_file(infptr, &status);
 
@@ -438,7 +477,7 @@ int varmosaic(void){
           fits_read_key_lng(infptr, "NAXIS2",   &inimsize2, comment, &status);
 
           if (status!=0) {
-              sprintf(text,"failed to read image dimentions!\n");
+              sprintf(text,"failed to read image dimentions from %i!\n",ScW[ienergy-1].intHDU);
               HD_printf(text);
               break;
           }; 
@@ -467,8 +506,11 @@ int varmosaic(void){
           fits_read_2d_flt(infptr, 0L, 0, inimsize1, inimsize1, inimsize2, in_flx_image[ienergy-1], &anynul, &status);
           fits_movabs_hdu(infptr,ScW[ienergy-1].varHDU, &hdutype, &status); /* variance HDU */
           fits_read_2d_flt(infptr, 0L, 0, inimsize1, inimsize1, inimsize2, in_var_image[ienergy-1], &anynul, &status);
-          fits_movabs_hdu(infptr,ScW[ienergy-1].expoHDU, &hdutype, &status); /* variance HDU */
-          fits_read_2d_flt(infptr, 0L, 0, inimsize1, inimsize1, inimsize2, in_expo_image[ienergy-1], &anynul, &status);
+
+          if (ScW[ienergy-1].expoHDU>0) { /* variance HDU */
+              fits_movabs_hdu(infptr,ScW[ienergy-1].expoHDU, &hdutype, &status); /* variance HDU */
+              fits_read_2d_flt(infptr, 0L, 0, inimsize1, inimsize1, inimsize2, in_expo_image[ienergy-1], &anynul, &status);
+          }
       }
       if (status!=0) {
           sprintf(text,"failed to read image dimentions!\n");
@@ -530,7 +572,9 @@ int varmosaic(void){
 		sub_exposure = exposure/ (float)(pow(pixdivide,2));
 		sub_exposure_flat = exposure_flat/ (float)(pow(pixdivide,2));
 		sub_variance = variance*(float) pow(pixdivide,2);
-        if(ienergy==1){exp_image[kk]=exp_image[kk]+sub_exposure_flat;}
+
+        if(ienergy==num_E_range){exp_image[kk]=exp_image[kk]+sub_exposure_flat;}
+
         expo_image[ienergy-1][kk]=expo_image[ienergy-1][kk]+sub_exposure;
 		if(var_image[ienergy-1][kk]>0.0){
 		  flx_image[ienergy-1][kk]=flx_image[ienergy-1][kk]/var_image[ienergy-1][kk]+ flux/sub_variance;
