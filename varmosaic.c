@@ -12,7 +12,7 @@ int printsub(const char *);
 
 #define VARMOSAIC_VERSION "varmosaic  ver 3.0 (2005-03-07)"
 
-#define  MAXFILE 10000      /* Maximum number of input files */
+#define  MAXFILE 3000      /* Maximum number of input files */
 #define  MAXNAMELENGTH 1024  /* Maximum character length of file names */
 #define  BufLen_2      MAXNAMELENGTH /* Required for pfile.h */
 #define  MAX_E_RANGES 20    /* Maximum number of energy ranges for the input images */
