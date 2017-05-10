@@ -247,9 +247,9 @@ int varmosaic(void){
                 fits_read_key_dbl(infptr, "E_MAX",   &E_max, comment, &status);
 
                 if(mode < 0 && strstr(imatype,"INTENSITY") != NULL) {
-                    mode=1;
+                    mode=0;
                     ScW[ii].varHDU = j;
-                    sprintf(text,"starts with intensity");
+                    sprintf(text,"starts with intensity\n");
                     HD_printf(text);
                 };
 
