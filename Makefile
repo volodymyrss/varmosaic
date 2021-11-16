@@ -16,4 +16,10 @@ HD_INSTALL_PFILES	= ${HD_CTASK}.par
 
 HD_INSTALL_HELP		= ${HD_CTASK}.txt
 
+
 include ${HD_STD_MAKEFILE}
+
+
+#ifndef HEALPIX
+#.ABORT
+#endif

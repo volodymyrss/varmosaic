@@ -240,9 +240,9 @@ int varmosaic(void){
     sprintf(text,"Pointing %.15lg direction: (%7.3f,%7.3f) rotation %.5g, offset from average  (%.5g,%.5g) %.5g\n",tstart, xrefval[i], yrefval[i],rot,avex,avey,avez,offset);
     HD_printf(text);
 
-    if (offset>60.) {
+    if (offset>180.) {
         inimages_mode[i]=2;
-        sprintf(text,"offset too large, skipping\n");
+        sprintf(text,"offset too large (%lg), skipping\n", offset);
         HD_printf(text);
         fits_close_file(infptr, &status);
         continue;
